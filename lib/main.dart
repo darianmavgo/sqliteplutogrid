@@ -3,8 +3,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:pluto_grid/pluto_grid.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:path/path.dart';
+import 'package:path/path.dart' as p;
+// ignore: depend_on_referenced_packages
+import 'package:pocketbase/pocketbase.dart'; 
 import 'db_service.dart';
+import 'flight_service.dart';
 
 void main() {
   // Initialize FFI
@@ -29,13 +32,13 @@ class MyApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const DBViewerPage(dbPath: '/Users/darianhickman/Documents/dbs/AllIndex5.sqlite'),
+      home: const DBViewerPage(dbPath: ''),
     );
   }
 }
 
 
-enum ViewMode { database, fileBrowser }
+enum ViewMode { database, fileBrowser, flight }
 
 class DBViewerPage extends StatefulWidget {
   final String dbPath;
@@ -49,7 +52,7 @@ class DBViewerPage extends StatefulWidget {
 class _DBViewerPageState extends State<DBViewerPage> {
   // Common State
   late TextEditingController _pathController;
-  ViewMode _currentMode = ViewMode.database;
+  ViewMode _currentMode = ViewMode.flight; // Default to Flight
   bool _isLoading = true;
   String? _errorMessage;
   Key _gridKey = UniqueKey(); // Force rebuild on every load
@@ -59,7 +62,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
   List<String> _tables = [];
   String? _selectedTable;
   List<PlutoColumn> _dbColumns = [];
-  int _loadedRows = 0;
+  // _loadedRows is not strictly used with infinity scroll, but kept for legacy
   int? _totalRows;
   PlutoGridStateManager? _dbStateManager;
 
@@ -67,11 +70,53 @@ class _DBViewerPageState extends State<DBViewerPage> {
   List<PlutoColumn> _fileColumns = [];
   List<PlutoRow> _fileRows = [];
 
+  // Flight Service State
+  final FlightService _flightService = FlightService();
+  bool _isFlightConnected = false;
+  bool _isViewingLinksList = false;
+  List<PlutoRow> _linksRows = [];
+
+
   @override
   void initState() {
     super.initState();
     _pathController = TextEditingController(text: widget.dbPath);
-    _loadPath();
+    // Initial load: Auto-connect to Flight
+    _autoConnectAndLoad();
+  }
+
+  Future<void> _autoConnectAndLoad() async {
+     print("[LOG] Auto-connecting to Flight...");
+     try {
+       // Try default credentials
+       await _flightService.authenticate("admin@example.com", "password123");
+       if (mounted) {
+         setState(() {
+           _isFlightConnected = true;
+         });
+         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Connected to Flight Server!")));
+         // Trigger load (empty path -> load links list)
+         _loadPath(); 
+       }
+     } catch (e) {
+       print("[WARN] Auto-connect failed: $e");
+       // If auto-connect fails, maybe show connect dialog or just error?
+       // For now, let's just fall through, _loadPath will fail or show empty.
+       if (widget.dbPath.isNotEmpty) {
+          // If a path was provided, maybe we should try local?
+           setState(() {
+              _currentMode = ViewMode.database; // Or determine from path
+           });
+           _loadPath();
+       } else {
+           if (mounted) {
+              setState(() {
+                 _isLoading = false;
+                 _errorMessage = "Could not auto-connect to Flight3 (127.0.0.1:8090). Ensure server is running.";
+              });
+           }
+       }
+     }
   }
 
   @override
@@ -95,22 +140,27 @@ class _DBViewerPageState extends State<DBViewerPage> {
       _tables = [];
       _dbColumns = [];
       _fileRows = [];
+      _linksRows = [];
       _gridKey = UniqueKey(); // Generate new key to force Grid rebuild
     });
 
     try {
+      if (_currentMode == ViewMode.flight) {
+         await _loadFlightData(path);
+         return;
+      }
+
+      // Local Mode Logic
       // Use statSync to follow links or verify existence robustly
       final type = FileSystemEntity.typeSync(path);
       print("[LOG] Path type detected: $type");
       
       if (type == FileSystemEntityType.notFound) {
+         // If not found locally, maybe user intended Flight mode? 
+         // For now, throw.
          throw Exception("Path not found: $path");
       }
 
-      // Check if it's a directory (or link to one?)
-      // FileSystemEntity.typeSync returns 'directory' logic for links if followLinks is true (default is true?)
-      // Actually default is true.
-      
       if (type == FileSystemEntityType.directory) {
         print("[LOG] Switching to File Browser Mode");
         setState(() {
@@ -133,6 +183,205 @@ class _DBViewerPageState extends State<DBViewerPage> {
       });
     }
   }
+
+  // --- Flight Logic ---
+  
+  Future<void> _connectToFlight() async {
+     // Dialog to get URL and Creds
+     final urlController = TextEditingController(text: _flightService.baseUrl);
+     final emailController = TextEditingController(text: "admin@example.com");
+     final passwordController = TextEditingController(text: "password123");
+
+     await showDialog(
+       context: context, 
+       builder: (context) {
+         return AlertDialog(
+           title: const Text("Connect to Flight Server"),
+           content: Column(
+             mainAxisSize: MainAxisSize.min,
+             children: [
+               TextField(controller: urlController, decoration: const InputDecoration(labelText: "Server URL")),
+               TextField(controller: emailController, decoration: const InputDecoration(labelText: "Email")),
+               TextField(controller: passwordController, decoration: const InputDecoration(labelText: "Password"), obscureText: true,),
+             ],
+           ),
+           actions: [
+             TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+             ElevatedButton(
+               onPressed: () async {
+                 try {
+                   // Update URL first
+                   _flightService.updateUrl(urlController.text);
+                   
+                   // Authenticate
+                   await _flightService.authenticate(emailController.text, passwordController.text);
+                   
+                   if (mounted) {
+                      setState(() {
+                        _isFlightConnected = true;
+                        _currentMode = ViewMode.flight;
+                        _pathController.text = ""; // Clear path for user input
+                      });
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Connected to Flight!")));
+                      // Load links list immediately
+                      _loadPath(); 
+                   }
+                 } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                 }
+               }, 
+               child: const Text("Connect")
+              ),
+           ],
+         );
+       }
+     );
+  }
+
+  Future<void> _loadFlightData(String banquetPath) async {
+    print("[LOG] Loading Flight Data: $banquetPath");
+    if (banquetPath.isEmpty) {
+       await _loadBanquetLinksList();
+       return;
+    }
+
+    try {
+      // Fetch schema only first? Or just fetch first page.
+      // fetchBanquetData returns rows and columns.
+      final data = await _flightService.fetchBanquetData(banquetPath, offset: 0, limit: 100);
+      
+      final columns = (data['columns'] as List).cast<String>();
+      // final rows = (data['rows'] as List).cast<Map<String, dynamic>>();
+      final totalCount = data['totalCount'] as int?;
+
+      setState(() {
+        _dbColumns = columns.map((e) => PlutoColumn(title: e, field: e, type: PlutoColumnType.text())).toList();
+        _totalRows = totalCount;
+        _isViewingLinksList = false;
+        _isLoading = false;
+        _errorMessage = null; 
+        _dbStateManager = null; // Reset state manager for new infinite scroll
+      });
+
+    } catch(e) {
+      print("[ERROR] Flight fetch failed: $e");
+      setState(() {
+        _isLoading = false;
+        _errorMessage = "Flight Error: $e";
+      });
+    }
+  }
+
+  Future<void> _loadBanquetLinksList() async {
+    print("[LOG] Loading Banquet Links List");
+    try {
+      final links = await _flightService.getBanquetLinks();
+      
+      final columns = [
+          PlutoColumn(title: 'Original URL', field: 'original_url', type: PlutoColumnType.text(), width: 400),
+          PlutoColumn(title: 'Created', field: 'created', type: PlutoColumnType.text(), width: 200),
+          PlutoColumn(title: 'ID', field: 'id', type: PlutoColumnType.text(), hide: true, width: 0),
+      ];
+      
+      final rows = links.map((r) {
+         return PlutoRow(cells: {
+             'original_url': PlutoCell(value: r.data['original_url'] ?? ''),
+             'created': PlutoCell(value: r.created),
+             'id': PlutoCell(value: r.id),
+         });
+      }).toList();
+
+      setState(() {
+          _dbColumns = columns;
+          _linksRows = rows;
+          _isViewingLinksList = true;
+          _isLoading = false;
+          _errorMessage = null;
+          _totalRows = null;
+      });
+    } catch (e) {
+      print("[ERROR] _loadBanquetLinksList failed: $e");
+      setState(() {
+        _isLoading = false;
+        _errorMessage = "Failed to load links: $e";
+      });
+    }
+  }
+
+  Future<void> _handleOfflineAccess(String banquetPath) async {
+    setState(() { _isLoading = true; _errorMessage = null; });
+    try {
+        // 1. Sync to get metadata
+        final meta = await _flightService.syncBanquet(banquetPath);
+        final serverPath = meta['server_path'];
+        final downloadUrl = meta['download_url'];
+        
+        if (serverPath == null || downloadUrl == null) {
+            throw Exception("Invalid metadata from server");
+        }
+
+        // 2. Check Same Server Mode
+        final serverFile = File(serverPath);
+        if (await serverFile.exists()) {
+            // Same Server!
+            print("[LOG] Same Server Mode detected: $serverPath");
+            if (mounted) {
+               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Opening directly from Server Cache (Same Server Mode)")));
+            }
+            
+            setState(() {
+                _currentMode = ViewMode.database;
+                _pathController.text = serverPath;
+            });
+            await _loadPath(); // Will trigger database load
+            return;
+        }
+        
+        // 3. Download Mode
+        print("[LOG] Remote Server detected. Downloading...");
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Downloading file from Flight Server...")));
+        }
+        
+        // Determine save path
+        final safeName = "flight_download_${DateTime.now().millisecondsSinceEpoch}.sqlite";
+        final tempDir = Directory.systemTemp;
+        final savePath = p.join(tempDir.path, safeName);
+        
+        await _flightService.downloadFile(downloadUrl, savePath);
+         
+        print("[LOG] Downloaded to: $savePath");
+        
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Download complete. Opening...")));
+        }
+
+        setState(() {
+            _currentMode = ViewMode.database;
+            _pathController.text = savePath;
+        });
+        await _loadPath();
+
+    } catch (e) {
+        print("[ERROR] Offline access failed: $e");
+        setState(() {
+            _isLoading = false;
+            _errorMessage = "Offline Access Failed: $e";
+        });
+    }
+  }
+
+  void _onFlightRowDoubleTap(PlutoGridOnRowDoubleTapEvent event) {
+      if (_isViewingLinksList) {
+          final url = event.row.cells['original_url']?.value.toString();
+          if (url != null && url.isNotEmpty) {
+              _pathController.text = url;
+              _loadPath();
+          }
+      }
+  }
+
 
   // --- Database Logic ---
 
@@ -169,7 +418,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
     setState(() {
       _isLoading = true;
       _dbColumns = [];
-      _loadedRows = 0;
       _totalRows = null;
       _errorMessage = null;
       _dbStateManager = null; 
@@ -250,7 +498,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
         if (aIsDir && !bIsDir && !bIsDB) return -1; // Dir comes before "Other"
         if (!aIsDir && bIsDir && !aIsDB) return 1;
 
-        return basename(a.path).toLowerCase().compareTo(basename(b.path).toLowerCase());
+        return p.basename(a.path).toLowerCase().compareTo(p.basename(b.path).toLowerCase());
       });
 
       _fileColumns = [
@@ -260,12 +508,12 @@ class _DBViewerPageState extends State<DBViewerPage> {
       ];
 
       _fileRows = entities.map((e) {
-        String type = e is Directory ? 'Folder' : extension(e.path);
+        String type = e is Directory ? 'Folder' : p.extension(e.path);
         String size = e is File ? '${(e.lengthSync() / 1024).toStringAsFixed(1)} KB' : '';
         
         return PlutoRow(
           cells: {
-             'name': PlutoCell(value: basename(e.path)),
+             'name': PlutoCell(value: p.basename(e.path)),
              'type': PlutoCell(value: type),
              'size': PlutoCell(value: size),
              'path': PlutoCell(value: e.path), // Hidden metadata
@@ -287,7 +535,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
   }
 
   bool _isDatabaseFile(String path) {
-    final ext = extension(path).toLowerCase();
+    final ext = p.extension(path).toLowerCase();
     return ext == '.sqlite' || ext == '.db';
   }
 
@@ -307,40 +555,54 @@ class _DBViewerPageState extends State<DBViewerPage> {
       appBar: AppBar(
         title: TextField(
           controller: _pathController,
-          decoration: const InputDecoration(
-            hintText: 'Enter Database Path or Folder',
+          decoration: InputDecoration(
+            hintText: _currentMode == ViewMode.flight ? 'Enter Banquet URL (e.g. data/db.sqlite;table)' : 'Enter Database Path or Folder',
             border: InputBorder.none,
             isDense: true,
+            prefixIcon: _currentMode == ViewMode.flight ? const Icon(Icons.cloud, color: Colors.blue) : const Icon(Icons.folder),
+            prefixText: _currentMode == ViewMode.flight ? '${_flightService.baseUrl}/' : null,
+            prefixStyle: const TextStyle(color: Colors.white70, fontSize: 16),
           ),
           style: const TextStyle(color: Colors.white, fontSize: 16),
           onSubmitted: (_) => _loadPath(),
         ),
         actions: [
-          if (_currentMode == ViewMode.database) ...[
+          IconButton(
+            icon: Icon(Icons.cloud_upload, color: _isFlightConnected ? Colors.green : Colors.grey),
+            tooltip: "Connect to Flight3 Server",
+            onPressed: _connectToFlight,
+          ),
+          if (_currentMode == ViewMode.flight && _pathController.text.isNotEmpty)
+             IconButton(
+               icon: const Icon(Icons.download),
+               tooltip: "Download or Open Local (Same Server)",
+               onPressed: () => _handleOfflineAccess(_pathController.text),
+             ),
+          if (_currentMode == ViewMode.database || _currentMode == ViewMode.flight) ...[
              if (_totalRows != null)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: Center(child: Text("Total Rows: $_totalRows")),
                 ),
-             if (_tables.isNotEmpty)
-               DropdownButton<String>(
-                 value: _selectedTable,
-                 onChanged: (String? newValue) {
-                   if (newValue != null) {
-                      setState(() {
-                        _selectedTable = newValue;
-                      });
-                      _loadTableData(newValue);
-                   }
-                 },
-                 items: _tables.map<DropdownMenuItem<String>>((String value) {
-                   return DropdownMenuItem<String>(
-                     value: value,
-                     child: Text(value),
-                   );
-                 }).toList(),
-               ),
           ],
+          if (_currentMode == ViewMode.database && _tables.isNotEmpty)
+                DropdownButton<String>(
+                  value: _selectedTable,
+                  onChanged: (String? newValue) {
+                    if (newValue != null) {
+                       setState(() {
+                         _selectedTable = newValue;
+                       });
+                       _loadTableData(newValue);
+                    }
+                  },
+                  items: _tables.map<DropdownMenuItem<String>>((String value) {
+                    return DropdownMenuItem<String>(
+                      value: value,
+                      child: Text(value),
+                    );
+                  }).toList(),
+                ),
           const SizedBox(width: 20),
         ],
       ),
@@ -359,6 +621,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
      if (_currentMode == ViewMode.database) {
         return _buildDatabaseGrid();
+     } else if (_currentMode == ViewMode.flight) {
+        return _buildFlightGrid();
      } else {
         return _buildFileBrowserGrid();
      }
@@ -394,6 +658,81 @@ class _DBViewerPageState extends State<DBViewerPage> {
                  isLast: newRows.isEmpty,
                  rows: newRows,
                );
+            },
+            stateManager: stateManager,
+          );
+        },
+        configuration: PlutoGridConfiguration.dark(
+           columnSize: const PlutoGridColumnSizeConfig(
+            autoSizeMode: PlutoAutoSizeMode.scale,
+          ),
+        ),
+      );
+  }
+  
+  Widget _buildFlightGrid() {
+     // If in links list mode, use static, else use infinite
+     if (_isViewingLinksList) {
+         if (_dbColumns.isEmpty && _linksRows.isEmpty) {
+             return const Center(child: Text("No Links Found."));
+         }
+         return PlutoGrid(
+             key: _gridKey,
+             columns: _dbColumns,
+             rows: _linksRows,
+             onRowDoubleTap: _onFlightRowDoubleTap, // Handle navigation
+             configuration: PlutoGridConfiguration.dark(
+               columnSize: const PlutoGridColumnSizeConfig(
+                autoSizeMode: PlutoAutoSizeMode.scale,
+              ),
+            ),
+         );
+     }
+  
+     // Data View Mode
+     if (_dbColumns.isEmpty) {
+        return const Center(child: Text("Enter a Banquet URL to view data from Flight Server"));
+     }
+
+     return PlutoGrid(
+        key: _gridKey,
+        columns: _dbColumns,
+        rows: [], 
+        onLoaded: (PlutoGridOnLoadedEvent event) {
+          // _dbStateManager = event.stateManager; // Reuse or separate? Reuse is fine for simple view.
+          event.stateManager.setShowColumnFilter(true);
+        },
+        createFooter: (stateManager) {
+          return PlutoInfinityScrollRows(
+            fetch: (request) async {
+               final path = _pathController.text.trim();
+               if (path.isEmpty) return PlutoInfinityScrollRowsResponse(isLast: true, rows: []);
+               
+               final offset = stateManager.refRows.length;
+               
+               try {
+                   final data = await _flightService.fetchBanquetData(path, offset: offset, limit: 100);
+                   final rowsList = (data['rows'] as List).cast<Map<String, dynamic>>();
+                   
+                   final newRows = rowsList.map((row) {
+                      final cells = <String, PlutoCell>{};
+                       // Ensure all columns in _dbColumns are present
+                      for (var col in _dbColumns) {
+                         var val = row[col.field];
+                         cells[col.field] = PlutoCell(value: val?.toString() ?? '');
+                      }
+                      return PlutoRow(cells: cells);
+                   }).toList();
+                   
+                   return PlutoInfinityScrollRowsResponse(
+                     isLast: newRows.isEmpty,
+                     rows: newRows,
+                   );
+               } catch (e) {
+                 print("Error fetching flight rows: $e");
+                 // Return empty to stop confusion
+                 return PlutoInfinityScrollRowsResponse(isLast: true, rows: []);
+               }
             },
             stateManager: stateManager,
           );
