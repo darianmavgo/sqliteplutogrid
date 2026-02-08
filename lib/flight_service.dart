@@ -125,4 +125,44 @@ class FlightService {
            throw Exception('Failed to download: ${response.statusCode}');
        }
   }
+
+  /// Generic GET request with query parameters
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? queryParams}) async {
+    final uri = Uri.parse('$baseUrl$path').replace(queryParameters: queryParams);
+    final response = await _httpClient.get(uri);
+    
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('HTTP ${response.statusCode} from $uri: ${response.body}');
+    }
+  }
+
+  /// Generic POST request
+  Future<Map<String, dynamic>> post(String path, {Map<String, dynamic>? body}) async {
+    final uri = Uri.parse('$baseUrl$path');
+    final response = await _httpClient.post(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: body != null ? jsonEncode(body) : null,
+    );
+    
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('HTTP ${response.statusCode} from $uri: ${response.body}');
+    }
+  }
+
+  /// Generic DELETE request
+  Future<void> delete(String path) async {
+    final uri = Uri.parse('$baseUrl$path');
+    final response = await _httpClient.delete(uri);
+    
+    if (response.statusCode != 200 && response.statusCode != 204) {
+      throw Exception('HTTP ${response.statusCode} from $uri: ${response.body}');
+    }
+  }
+
+  String? get userId => pb.authStore.model?.id;
 }
