@@ -48,6 +48,17 @@ void main() async {
   databaseFactory = databaseFactoryFfi;
 
   runApp(const MyApp());
+  
+  // Write status file if requested (for integration tests)
+  const statusFilePath = String.fromEnvironment('STATUS_FILE_PATH');
+  if (statusFilePath.isNotEmpty) {
+     try {
+       await File(statusFilePath).writeAsString('Window Initialized at ${DateTime.now()}');
+     } catch (e) {
+       // Ignore errors writing to tmp
+       debugPrint('Failed to write status file: $e');
+     }
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -195,6 +206,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
         final rows = FileBrowserService.loadFiles(path);
         setState(() {
           _currentMode = ViewMode.fileBrowser;
+          _pageIndex = 1; // Sync sidebar
           _fileRows = rows;
           _isLoading = false;
         });

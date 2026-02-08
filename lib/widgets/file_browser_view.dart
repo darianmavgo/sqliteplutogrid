@@ -94,15 +94,14 @@ class FileBrowserView extends StatelessWidget {
               ],
               rows: rows,
               onRowDoubleTap: (event) => onRowDoubleTap(event.row),
-              configuration: const TrinaGridConfiguration(
+              configuration: const TrinaGridConfiguration.dark(
+                style: TrinaGridStyleConfig.dark(
+                  gridBackgroundColor: Colors.transparent,
+                  rowColor: Colors.transparent,
+                  gridBorderColor: Colors.white24,
+                ),
                 columnSize: TrinaGridColumnSizeConfig(
                   autoSizeMode: TrinaAutoSizeMode.scale, // Ensure columns fill width
-                ),
-                style: TrinaGridStyleConfig(
-                  gridBackgroundColor: Colors.transparent, // Let theme handle it
-                  rowColor: Colors.transparent,
-                  gridBorderColor: Colors.transparent,
-                  // Dark theme colors will apply automatically usually, but specifying safe defaults
                 ),
               ),
             ),
