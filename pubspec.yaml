@@ -42,6 +42,8 @@ dependencies:
   macos_ui: ^2.2.2
   window_manager: ^0.3.7
   flutter_svg: ^2.0.10+1
+  path_provider: ^2.1.1
+  shared_preferences: ^2.2.2
 
 dev_dependencies:
   flutter_test:
