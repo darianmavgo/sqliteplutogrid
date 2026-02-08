@@ -11,6 +11,7 @@ class FlightService {
 
   FlightService({String? baseUrl}) 
       : baseUrl = baseUrl ?? const String.fromEnvironment('FLIGHT_URL', defaultValue: 'http://127.0.0.1:8090') {
+    print("[FlightService] Initialized with Base URL: $baseUrl");
     initPb();
     _httpClient = http.Client();
   }
@@ -50,13 +51,26 @@ class FlightService {
     }
     
     final uri = Uri.parse('$baseUrl/sqliter/rows').replace(queryParameters: queryParams);
+    print('[FlightService] Fetching: $uri');
 
-    final response = await _httpClient.get(uri);
-    
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception('Failed to load data: ${response.statusCode} ${response.body}');
+    try {
+      final response = await _httpClient.get(uri);
+      
+      print('[FlightService] Response status: ${response.statusCode}');
+      print('[FlightService] Response body (first 200 chars): ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}');
+      
+      if (response.statusCode == 200) {
+        try {
+          return jsonDecode(response.body);
+        } catch (e) {
+          throw Exception('Failed to parse JSON response from $uri: $e\nResponse: ${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}...');
+        }
+      } else {
+        throw Exception('HTTP ${response.statusCode} from $uri: ${response.body}');
+      }
+    } catch (e) {
+      print('[FlightService] ERROR: $e');
+      rethrow;
     }
   }
   

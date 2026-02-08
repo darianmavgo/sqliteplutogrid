@@ -1,18 +1,65 @@
 import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:pluto_grid/pluto_grid.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:trina_grid/trina_grid.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart' as p;
 // ignore: depend_on_referenced_packages
 import 'package:pocketbase/pocketbase.dart'; 
+import 'package:macos_ui/macos_ui.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'db_service.dart';
 import 'flight_service.dart';
 
-void main() {
-  // Initialize FFI
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize window manager
+  await windowManager.ensureInitialized();
+  WindowOptions windowOptions = const WindowOptions(
+    size: Size(1200, 800),
+    center: true,
+    backgroundColor: Colors.transparent,
+    skipTaskbar: false,
+    titleBarStyle: TitleBarStyle.hidden,
+  );
+  windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.show();
+    await windowManager.focus();
+    
+    // Log initial state
+    Size size = await windowManager.getSize();
+    bool isFull = await windowManager.isFullScreen();
+    print("[WINDOW] Initial Size: ${size.width}x${size.height}, FullScreen: $isFull");
+
+    // Attempt Full Screen (Native Mode)
+    print("[WINDOW] Attempting to set Full Screen...");
+    await windowManager.setFullScreen(true);
+    
+    // Diagnostic verification after a short delay
+    await Future.delayed(const Duration(milliseconds: 500));
+    Size finalSize = await windowManager.getSize();
+    bool finalFull = await windowManager.isFullScreen();
+    print("[WINDOW] Final Size: ${finalSize.width}x${finalSize.height}, FullScreen: $finalFull");
+
+    // Write to a status file for Mage to verify
+    try {
+      final statusPath = const String.fromEnvironment('STATUS_FILE_PATH');
+      if (statusPath.isNotEmpty) {
+        final logFile = File(statusPath);
+        await logFile.writeAsString("READY: ${finalSize.width}x${finalSize.height}, FULLSCREEN: $finalFull");
+        print("[WINDOW] status written to $statusPath");
+      }
+    } catch (e) {
+      print("[WINDOW] Failed to write status file: $e");
+    }
+  });
+
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
 
   runApp(const MyApp());
 }
@@ -22,21 +69,16 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'SQLite PlutoGrid Viewer',
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple, 
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
+    return MacosApp(
+      title: '🔥 Sqliter',
+      theme: MacosThemeData.dark(),
+      darkTheme: MacosThemeData.dark(),
+      themeMode: ThemeMode.dark,
+      debugShowCheckedModeBanner: false,
       home: const DBViewerPage(dbPath: ''),
     );
   }
 }
-
 
 enum ViewMode { database, fileBrowser, flight }
 
@@ -61,21 +103,20 @@ class _DBViewerPageState extends State<DBViewerPage> {
   final DatabaseService _dbService = DatabaseService();
   List<String> _tables = [];
   String? _selectedTable;
-  List<PlutoColumn> _dbColumns = [];
+  List<TrinaColumn> _dbColumns = [];
   // _loadedRows is not strictly used with infinity scroll, but kept for legacy
   int? _totalRows;
-  PlutoGridStateManager? _dbStateManager;
+  TrinaGridStateManager? _dbStateManager;
 
   // File Browser State
-  List<PlutoColumn> _fileColumns = [];
-  List<PlutoRow> _fileRows = [];
+  List<TrinaColumn> _fileColumns = [];
+  List<TrinaRow> _fileRows = [];
 
   // Flight Service State
   final FlightService _flightService = FlightService();
   bool _isFlightConnected = false;
   bool _isViewingLinksList = false;
-  List<PlutoRow> _linksRows = [];
-
+  List<TrinaRow> _linksRows = [];
 
   @override
   void initState() {
@@ -94,7 +135,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
          setState(() {
            _isFlightConnected = true;
          });
-         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Connected to Flight Server!")));
          // Trigger load (empty path -> load links list)
          _loadPath(); 
        }
@@ -112,7 +152,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
            if (mounted) {
               setState(() {
                  _isLoading = false;
-                 _errorMessage = "Could not auto-connect to Flight3 (127.0.0.1:8090). Ensure server is running.";
+                 _errorMessage = "Could not auto-connect to Flight3 (${_flightService.baseUrl}). Ensure server is running.";
               });
            }
        }
@@ -223,12 +263,10 @@ class _DBViewerPageState extends State<DBViewerPage> {
                         _pathController.text = ""; // Clear path for user input
                       });
                       Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Connected to Flight!")));
                       // Load links list immediately
                       _loadPath(); 
                    }
                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
                  }
                }, 
                child: const Text("Connect")
@@ -256,7 +294,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
       final totalCount = data['totalCount'] as int?;
 
       setState(() {
-        _dbColumns = columns.map((e) => PlutoColumn(title: e, field: e, type: PlutoColumnType.text())).toList();
+        _dbColumns = columns.map((e) => TrinaColumn(title: e, field: e, type: TrinaColumnType.text())).toList();
         _totalRows = totalCount;
         _isViewingLinksList = false;
         _isLoading = false;
@@ -265,10 +303,10 @@ class _DBViewerPageState extends State<DBViewerPage> {
       });
 
     } catch(e) {
-      print("[ERROR] Flight fetch failed: $e");
+      print("[ERROR] Flight fetch failed for path '$banquetPath': $e");
       setState(() {
         _isLoading = false;
-        _errorMessage = "Flight Error: $e";
+        _errorMessage = "Failed to load data from:\n$banquetPath\n\nError: $e";
       });
     }
   }
@@ -279,16 +317,60 @@ class _DBViewerPageState extends State<DBViewerPage> {
       final links = await _flightService.getBanquetLinks();
       
       final columns = [
-          PlutoColumn(title: 'Original URL', field: 'original_url', type: PlutoColumnType.text(), width: 400),
-          PlutoColumn(title: 'Created', field: 'created', type: PlutoColumnType.text(), width: 200),
-          PlutoColumn(title: 'ID', field: 'id', type: PlutoColumnType.text(), hide: true, width: 0),
+          TrinaColumn(
+            title: 'Banquet Path', 
+            field: 'display_path', 
+            type: TrinaColumnType.text(),
+            renderer: (rendererContext) {
+              return Text(
+                rendererContext.cell.value?.toString() ?? '',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: const TextStyle(fontSize: 12, color: Colors.white),
+              );
+            },
+          ),
+          TrinaColumn(
+            title: 'Created', 
+            field: 'created', 
+            type: TrinaColumnType.text(),
+            width: 180,
+            renderer: (rendererContext) {
+              final dateStr = rendererContext.cell.value?.toString() ?? '';
+              // Format the date more nicely if needed
+              final displayDate = dateStr.length > 19 ? dateStr.substring(0, 19).replaceAll('T', ' ') : dateStr;
+              return Text(
+                displayDate,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: Colors.white70),
+              );
+            },
+          ),
+          TrinaColumn(title: 'Full URL', field: 'original_url', type: TrinaColumnType.text(), hide: true),
+          TrinaColumn(title: 'ID', field: 'id', type: TrinaColumnType.text(), hide: true),
       ];
       
       final rows = links.map((r) {
-         return PlutoRow(cells: {
-             'original_url': PlutoCell(value: r.data['original_url'] ?? ''),
-             'created': PlutoCell(value: r.created),
-             'id': PlutoCell(value: r.id),
+         final originalUrl = r.data['original_url'] ?? '';
+         // Extract a cleaner display path (filename or last part of URL)
+         String displayPath = originalUrl;
+         if (originalUrl.contains('/')) {
+           final parts = originalUrl.split('/');
+           // Find the meaningful part - usually after 'mksqltp' or just take last 3-4 parts
+           if (parts.length > 3) {
+             displayPath = parts.sublist(parts.length - 3).join('/');
+           }
+         }
+         // If it's still too long, just show last 60 chars
+         if (displayPath.length > 80) {
+           displayPath = '...' + displayPath.substring(displayPath.length - 77);
+         }
+         
+         return TrinaRow(cells: {
+             'display_path': TrinaCell(value: displayPath),
+             'created': TrinaCell(value: r.created),
+             'original_url': TrinaCell(value: originalUrl),
+             'id': TrinaCell(value: r.id),
          });
       }).toList();
 
@@ -321,29 +403,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
             throw Exception("Invalid metadata from server");
         }
 
-        // 2. Check Same Server Mode
-        final serverFile = File(serverPath);
-        if (await serverFile.exists()) {
-            // Same Server!
-            print("[LOG] Same Server Mode detected: $serverPath");
-            if (mounted) {
-               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Opening directly from Server Cache (Same Server Mode)")));
-            }
-            
-            setState(() {
-                _currentMode = ViewMode.database;
-                _pathController.text = serverPath;
-            });
-            await _loadPath(); // Will trigger database load
-            return;
-        }
-        
-        // 3. Download Mode
-        print("[LOG] Remote Server detected. Downloading...");
-        if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Downloading file from Flight Server...")));
-        }
-        
         // Determine save path
         final safeName = "flight_download_${DateTime.now().millisecondsSinceEpoch}.sqlite";
         final tempDir = Directory.systemTemp;
@@ -351,16 +410,11 @@ class _DBViewerPageState extends State<DBViewerPage> {
         
         await _flightService.downloadFile(downloadUrl, savePath);
          
-        print("[LOG] Downloaded to: $savePath");
-        
         if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Download complete. Opening...")));
+          setState(() => _isLoading = false);
+          _pathController.text = savePath;
+          _loadPath();
         }
-
-        setState(() {
-            _currentMode = ViewMode.database;
-            _pathController.text = savePath;
-        });
         await _loadPath();
 
     } catch (e) {
@@ -372,7 +426,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
     }
   }
 
-  void _onFlightRowDoubleTap(PlutoGridOnRowDoubleTapEvent event) {
+  void _onFlightRowDoubleTap(TrinaGridOnRowDoubleTapEvent event) {
       if (_isViewingLinksList) {
           final url = event.row.cells['original_url']?.value.toString();
           if (url != null && url.isNotEmpty) {
@@ -381,7 +435,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
           }
       }
   }
-
 
   // --- Database Logic ---
 
@@ -437,10 +490,10 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
       print("[LOG] Columns loaded: ${headers.length}");
       _dbColumns = headers.map((key) {
-        return PlutoColumn(
+        return TrinaColumn(
           title: key,
           field: key,
-          type: PlutoColumnType.text(),
+          type: TrinaColumnType.text(),
         );
       }).toList();
 
@@ -502,21 +555,21 @@ class _DBViewerPageState extends State<DBViewerPage> {
       });
 
       _fileColumns = [
-        PlutoColumn(title: 'Name', field: 'name', type: PlutoColumnType.text(), enableRowChecked: false),
-        PlutoColumn(title: 'Type', field: 'type', type: PlutoColumnType.text(), width: 100),
-        PlutoColumn(title: 'Size', field: 'size', type: PlutoColumnType.text(), width: 100),
+        TrinaColumn(title: 'Name', field: 'name', type: TrinaColumnType.text(), enableRowChecked: false),
+        TrinaColumn(title: 'Type', field: 'type', type: TrinaColumnType.text(), width: 100),
+        TrinaColumn(title: 'Size', field: 'size', type: TrinaColumnType.text(), width: 100),
       ];
 
       _fileRows = entities.map((e) {
         String type = e is Directory ? 'Folder' : p.extension(e.path);
         String size = e is File ? '${(e.lengthSync() / 1024).toStringAsFixed(1)} KB' : '';
         
-        return PlutoRow(
+        return TrinaRow(
           cells: {
-             'name': PlutoCell(value: p.basename(e.path)),
-             'type': PlutoCell(value: type),
-             'size': PlutoCell(value: size),
-             'path': PlutoCell(value: e.path), // Hidden metadata
+             'name': TrinaCell(value: p.basename(e.path)),
+             'type': TrinaCell(value: type),
+             'size': TrinaCell(value: size),
+             'path': TrinaCell(value: e.path), // Hidden metadata
           },
         );
       }).toList();
@@ -539,7 +592,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
     return ext == '.sqlite' || ext == '.db';
   }
 
-  void _onFileBrowserRowDoubleTap(PlutoGridOnRowDoubleTapEvent event) {
+  void _onFileBrowserRowDoubleTap(TrinaGridOnRowDoubleTapEvent event) {
     final path = event.row.cells['path']?.value.toString();
     if (path != null) {
       _pathController.text = path;
@@ -551,72 +604,144 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: TextField(
-          controller: _pathController,
-          decoration: InputDecoration(
-            hintText: _currentMode == ViewMode.flight ? 'Enter Banquet URL (e.g. data/db.sqlite;table)' : 'Enter Database Path or Folder',
-            border: InputBorder.none,
-            isDense: true,
-            prefixIcon: _currentMode == ViewMode.flight ? const Icon(Icons.cloud, color: Colors.blue) : const Icon(Icons.folder),
-            prefixText: _currentMode == ViewMode.flight ? '${_flightService.baseUrl}/' : null,
-            prefixStyle: const TextStyle(color: Colors.white70, fontSize: 16),
-          ),
-          style: const TextStyle(color: Colors.white, fontSize: 16),
-          onSubmitted: (_) => _loadPath(),
-        ),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.cloud_upload, color: _isFlightConnected ? Colors.green : Colors.grey),
-            tooltip: "Connect to Flight3 Server",
-            onPressed: _connectToFlight,
-          ),
-          if (_currentMode == ViewMode.flight && _pathController.text.isNotEmpty)
-             IconButton(
-               icon: const Icon(Icons.download),
-               tooltip: "Download or Open Local (Same Server)",
-               onPressed: () => _handleOfflineAccess(_pathController.text),
-             ),
-          if (_currentMode == ViewMode.database || _currentMode == ViewMode.flight) ...[
-             if (_totalRows != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Center(child: Text("Total Rows: $_totalRows")),
+    return MacosScaffold(
+      toolBar: ToolBar(
+        titleWidth: 2000,
+        title: Row(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 4.0, right: 8.0),
+              child: SvgPicture.asset(
+                'assets/fire.svg',
+                width: 24,
+                height: 24,
+              ),
+            ),
+            Expanded(
+              child: MacosTextField(
+                controller: _pathController,
+                placeholder: _currentMode == ViewMode.flight ? 'Banquet URL (e.g. data.db;table)' : 'Path',
+                suffix: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_currentMode == ViewMode.database && _tables.isNotEmpty)
+                      MacosPopupButton<String>(
+                        value: _selectedTable,
+                        onChanged: (String? newValue) {
+                          if (newValue != null) {
+                            setState(() {
+                              _selectedTable = newValue;
+                            });
+                            _loadTableData(newValue);
+                          }
+                        },
+                        items: _tables.map<MacosPopupMenuItem<String>>((String value) {
+                          return MacosPopupMenuItem<String>(
+                            value: value,
+                            child: Text(value),
+                          );
+                        }).toList(),
+                      ),
+                    if (_totalRows != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                        child: Text("Rows: $_totalRows", style: MacosTheme.of(context).typography.caption1),
+                      ),
+                    MacosIconButton(
+                      icon: Icon(
+                        CupertinoIcons.cloud_upload,
+                        color: _isFlightConnected ? MacosColors.systemGreenColor : MacosColors.systemGrayColor,
+                      ),
+                      onPressed: _connectToFlight,
+                    ),
+                    if (_currentMode == ViewMode.flight && _pathController.text.isNotEmpty)
+                      MacosIconButton(
+                        icon: const Icon(CupertinoIcons.cloud_download),
+                        onPressed: () => _handleOfflineAccess(_pathController.text),
+                      ),
+                  ],
                 ),
+                onSubmitted: (_) => _loadPath(),
+              ),
+            ),
           ],
-          if (_currentMode == ViewMode.database && _tables.isNotEmpty)
-                DropdownButton<String>(
-                  value: _selectedTable,
-                  onChanged: (String? newValue) {
-                    if (newValue != null) {
-                       setState(() {
-                         _selectedTable = newValue;
-                       });
-                       _loadTableData(newValue);
-                    }
-                  },
-                  items: _tables.map<DropdownMenuItem<String>>((String value) {
-                    return DropdownMenuItem<String>(
-                      value: value,
-                      child: Text(value),
-                    );
-                  }).toList(),
-                ),
-          const SizedBox(width: 20),
-        ],
+        ),
       ),
-      body: _buildBody(),
+      children: [
+        ContentArea(
+          builder: (context, scrollController) {
+            return _buildBody();
+          },
+        ),
+      ],
     );
   }
 
   Widget _buildBody() {
      if (_errorMessage != null) {
-       return Center(child: Text('Error: $_errorMessage', style: const TextStyle(color: Colors.red)));
+       return Center(
+         child: Container(
+           constraints: const BoxConstraints(maxWidth: 600),
+           padding: const EdgeInsets.all(32.0),
+           child: Column(
+             mainAxisAlignment: MainAxisAlignment.center,
+             children: [
+               const Icon(CupertinoIcons.exclamationmark_triangle, size: 64, color: MacosColors.systemRedColor),
+               const SizedBox(height: 24),
+               Text(
+                 'Error Loading Data',
+                 style: MacosTheme.of(context).typography.title1.copyWith(color: MacosColors.systemRedColor),
+               ),
+               const SizedBox(height: 16),
+               Container(
+                 padding: const EdgeInsets.all(16),
+                 decoration: BoxDecoration(
+                   color: const Color(0xFF2D2D2D),
+                   borderRadius: BorderRadius.circular(8),
+                   border: Border.all(color: MacosColors.systemRedColor.withOpacity(0.3)),
+                 ),
+                 child: SelectableText(
+                   _errorMessage!,
+                   style: MacosTheme.of(context).typography.body.copyWith(
+                     fontFamily: 'monospace',
+                     color: Colors.white70,
+                   ),
+                 ),
+               ),
+               const SizedBox(height: 24),
+               Row(
+                 mainAxisAlignment: MainAxisAlignment.center,
+                 children: [
+                   MacosIconButton(
+                     icon: const Icon(CupertinoIcons.refresh, color: MacosColors.systemBlueColor),
+                     onPressed: () {
+                       setState(() {
+                         _errorMessage = null;
+                         _isLoading = true;
+                       });
+                       _loadPath();
+                     },
+                   ),
+                   const SizedBox(width: 16),
+                   MacosIconButton(
+                     icon: const Icon(CupertinoIcons.clear, color: MacosColors.systemGrayColor),
+                     onPressed: () {
+                       setState(() {
+                         _errorMessage = null;
+                         _pathController.clear();
+                       });
+                     },
+                   ),
+                 ],
+               ),
+             ],
+           ),
+         ),
+       );
      }
      
      if (_isLoading) {
-       return const Center(child: CircularProgressIndicator());
+       return const Center(child: ProgressCircle());
      }
 
      if (_currentMode == ViewMode.database) {
@@ -633,28 +758,28 @@ class _DBViewerPageState extends State<DBViewerPage> {
         return const Center(child: Text("Select a table to view data"));
      }
 
-     return PlutoGrid(
+     return TrinaGrid(
         key: _gridKey,
         columns: _dbColumns,
         rows: [], 
-        onLoaded: (PlutoGridOnLoadedEvent event) {
+        onLoaded: (TrinaGridOnLoadedEvent event) {
           _dbStateManager = event.stateManager;
           event.stateManager.setShowColumnFilter(true);
         },
         createFooter: (stateManager) {
-          return PlutoInfinityScrollRows(
+          return TrinaInfinityScrollRows(
             fetch: (request) async {
-               if (_selectedTable == null) return PlutoInfinityScrollRowsResponse(isLast: true, rows: []);
+               if (_selectedTable == null) return TrinaInfinityScrollRowsResponse(isLast: true, rows: []);
                final offset = stateManager.refRows.length;
                final rowsData = await _dbService.fetchRows(_selectedTable!, limit: 100, offset: offset);
                final newRows = rowsData.map((row) {
-                  final cells = <String, PlutoCell>{};
+                  final cells = <String, TrinaCell>{};
                   row.forEach((key, value) {
-                    cells[key] = PlutoCell(value: value?.toString() ?? '');
+                    cells[key] = TrinaCell(value: value?.toString() ?? '');
                   });
-                  return PlutoRow(cells: cells);
+                  return TrinaRow(cells: cells);
                }).toList();
-               return PlutoInfinityScrollRowsResponse(
+               return TrinaInfinityScrollRowsResponse(
                  isLast: newRows.isEmpty,
                  rows: newRows,
                );
@@ -662,11 +787,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
             stateManager: stateManager,
           );
         },
-        configuration: PlutoGridConfiguration.dark(
-           columnSize: const PlutoGridColumnSizeConfig(
-            autoSizeMode: PlutoAutoSizeMode.scale,
-          ),
-        ),
+        configuration: _getGridConfiguration(context),
       );
   }
   
@@ -676,16 +797,12 @@ class _DBViewerPageState extends State<DBViewerPage> {
          if (_dbColumns.isEmpty && _linksRows.isEmpty) {
              return const Center(child: Text("No Links Found."));
          }
-         return PlutoGrid(
+         return TrinaGrid(
              key: _gridKey,
              columns: _dbColumns,
              rows: _linksRows,
              onRowDoubleTap: _onFlightRowDoubleTap, // Handle navigation
-             configuration: PlutoGridConfiguration.dark(
-               columnSize: const PlutoGridColumnSizeConfig(
-                autoSizeMode: PlutoAutoSizeMode.scale,
-              ),
-            ),
+              configuration: _getGridConfiguration(context),
          );
      }
   
@@ -694,19 +811,19 @@ class _DBViewerPageState extends State<DBViewerPage> {
         return const Center(child: Text("Enter a Banquet URL to view data from Flight Server"));
      }
 
-     return PlutoGrid(
+     return TrinaGrid(
         key: _gridKey,
         columns: _dbColumns,
         rows: [], 
-        onLoaded: (PlutoGridOnLoadedEvent event) {
+        onLoaded: (TrinaGridOnLoadedEvent event) {
           // _dbStateManager = event.stateManager; // Reuse or separate? Reuse is fine for simple view.
           event.stateManager.setShowColumnFilter(true);
         },
         createFooter: (stateManager) {
-          return PlutoInfinityScrollRows(
+          return TrinaInfinityScrollRows(
             fetch: (request) async {
                final path = _pathController.text.trim();
-               if (path.isEmpty) return PlutoInfinityScrollRowsResponse(isLast: true, rows: []);
+               if (path.isEmpty) return TrinaInfinityScrollRowsResponse(isLast: true, rows: []);
                
                final offset = stateManager.refRows.length;
                
@@ -715,46 +832,62 @@ class _DBViewerPageState extends State<DBViewerPage> {
                    final rowsList = (data['rows'] as List).cast<Map<String, dynamic>>();
                    
                    final newRows = rowsList.map((row) {
-                      final cells = <String, PlutoCell>{};
+                      final cells = <String, TrinaCell>{};
                        // Ensure all columns in _dbColumns are present
                       for (var col in _dbColumns) {
                          var val = row[col.field];
-                         cells[col.field] = PlutoCell(value: val?.toString() ?? '');
+                         cells[col.field] = TrinaCell(value: val?.toString() ?? '');
                       }
-                      return PlutoRow(cells: cells);
+                      return TrinaRow(cells: cells);
                    }).toList();
                    
-                   return PlutoInfinityScrollRowsResponse(
+                   return TrinaInfinityScrollRowsResponse(
                      isLast: newRows.isEmpty,
                      rows: newRows,
                    );
                } catch (e) {
                  print("Error fetching flight rows: $e");
                  // Return empty to stop confusion
-                 return PlutoInfinityScrollRowsResponse(isLast: true, rows: []);
+                 return TrinaInfinityScrollRowsResponse(isLast: true, rows: []);
                }
             },
             stateManager: stateManager,
           );
         },
-        configuration: PlutoGridConfiguration.dark(
-           columnSize: const PlutoGridColumnSizeConfig(
-            autoSizeMode: PlutoAutoSizeMode.scale,
-          ),
-        ),
+        configuration: _getGridConfiguration(context),
       );
   }
 
   Widget _buildFileBrowserGrid() {
-    return PlutoGrid(
+    return TrinaGrid(
       key: _gridKey,
       columns: _fileColumns,
       rows: _fileRows,
       onRowDoubleTap: _onFileBrowserRowDoubleTap, 
-      configuration: PlutoGridConfiguration.dark(
-         columnSize: const PlutoGridColumnSizeConfig(
-          autoSizeMode: PlutoAutoSizeMode.scale,
-        ),
+      configuration: _getGridConfiguration(context),
+    );
+  }
+  TrinaGridConfiguration _getGridConfiguration(BuildContext context) {
+    return TrinaGridConfiguration.dark(
+      style: TrinaGridStyleConfig(
+        rowHeight: 30,
+        columnHeight: 32,
+        columnTextStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+        cellTextStyle: const TextStyle(fontSize: 12, color: Colors.white),
+        gridBackgroundColor: const Color(0xFF1E1E1E),
+        rowColor: const Color(0xFF2D2D2D),
+        activatedColor: const Color(0xFF4A4A4A),
+        cellColorInEditState: const Color(0xFF3A3A3A),
+        cellColorInReadOnlyState: const Color(0xFF2D2D2D),
+        gridBorderColor: const Color(0xFF4A4A4A),
+        borderColor: const Color(0xFF3A3A3A),
+        activatedBorderColor: MacosColors.systemBlueColor,
+        inactivatedBorderColor: const Color(0xFF4A4A4A),
+        iconColor: Colors.white70,
+        disabledIconColor: Colors.white30,
+      ),
+      columnSize: const TrinaGridColumnSizeConfig(
+        autoSizeMode: TrinaAutoSizeMode.none,
       ),
     );
   }
