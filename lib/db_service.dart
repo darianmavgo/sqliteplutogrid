@@ -36,6 +36,11 @@ class DatabaseService {
     return _db!.rawQuery('SELECT * FROM "$tableName" LIMIT $limit OFFSET $offset');
   }
 
+  Future<List<Map<String, Object?>>> executeQuery(String sql) async {
+    if (_db == null) throw Exception("Database not connected");
+    return _db!.rawQuery(sql);
+  }
+
   Stream<List<Map<String, Object?>>> streamRows(String tableName, {int chunkSize = 100}) async* {
     if (_db == null) throw Exception("Database not connected");
     int offset = 0;

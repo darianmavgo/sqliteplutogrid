@@ -118,6 +118,24 @@ class FlightService {
     }
   }
 
+  Future<String> getHomeDatabasePath() async {
+    final cleanBase = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+    final uri = Uri.parse('$cleanBase/sqliter/home');
+    
+    try {
+      final response = await _httpClient.get(uri);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['path'];
+      } else {
+        throw Exception('Failed to get home path: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint("[FlightService] Error fetching home path: $e");
+      rethrow;
+    }
+  }
+
   /// Downloads the file from Flight3 to a local path.
   Future<void> downloadFile(String downloadUrlPath, String savePath) async {
       final cleanBase = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;

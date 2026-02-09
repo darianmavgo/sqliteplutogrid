@@ -8,7 +8,9 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 // import 'package:pocketbase/pocketbase.dart'; 
 import 'package:macos_ui/macos_ui.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
 
 import 'db_service.dart';
 import 'flight_service.dart';
@@ -115,13 +117,15 @@ class _DBViewerPageState extends State<DBViewerPage> {
   List<TrinaColumn> _gridColumns = [];
   String? _gridTitle;
   int? _totalRows;
+  String? _homePath; // Cache home path
   
   // We need to keep track of what we are viewing to fetch correct rows
   // 0 = Banquet Links (Default home)
   // 1 = Database Table
+  // 2 = Query Result (In-Memory)
   int _viewType = 0; 
   String? _currentTableName; // For DB view
-  List<TrinaRow> _cachedBanquetRows = []; // For Banquet view
+  List<TrinaRow> _cachedBanquetRows = []; // For Query view
 
   @override
   void initState() {
@@ -134,59 +138,36 @@ class _DBViewerPageState extends State<DBViewerPage> {
     // Perform async initialization
     _initServices();
     
-    // Initial checks - Load Banquet Links as "Home"
-    _loadBanquetLinks();
+    // Initial checks - Load Home DB
+    _loadHome();
   }
 
   Future<void> _initServices() async {
     // Initialize services if needed
   }
   
-  Future<void> _loadBanquetLinks() async {
+  Future<void> _loadHome() async {
      // Reset title
      windowManager.setTitle('🍊');
      setState(() {
        _isLoading = true;
        _errorMessage = null;
-       _viewType = 0;
-       _gridTitle = "Banquet Links";
-       _currentTableName = null;
-       _totalRows = null;
+       _viewType = 0; // Home Mode
+       _pathController.clear();
      });
      
      try {
-       final links = await _flightService.getBanquetLinks();
-       final rows = links.map((record) {
-             final path = record.data['original_url'] ?? '';
-             final desc = record.data['description'] ?? '';
-             final isFolder = desc.toLowerCase().contains('folder') || !path.contains('.');
-             final displayPath = isFolder ? '📁 $path' : '📄 $path';
-             
-             return TrinaRow(
-                cells: {
-                  'id': TrinaCell(value: record.id),
-                  'path': TrinaCell(value: displayPath),
-                  'raw_path': TrinaCell(value: path),
-                  'desc': TrinaCell(value: record.data['description'] ?? ''),
-                  'original_url': TrinaCell(value: record.data['original_url'] ?? ''),
-                }
-             );
-           }).toList();
-
-       setState(() {
-          _cachedBanquetRows = rows;
-          _gridColumns = [
-              TrinaColumn(field: 'path', title: 'Banquet Path (Double Click)', width: 500, frozen: TrinaColumnFrozen.start, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false),
-              TrinaColumn(field: 'desc', title: 'Details', width: 300, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false),
-              TrinaColumn(field: 'original_url', title: 'Source', width: 400, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false),
-          ];
-          _totalRows = rows.length;
-          _isLoading = false;
-       });
+       // 1. Get path to home.sqlite from server
+       final homePath = await _flightService.getHomeDatabasePath();
+       _homePath = homePath;
+       
+       // 2. Open it as a database
+       await _openDatabaseFile(homePath, isHome: true);
+       
      } catch (e) {
        setState(() {
          _isLoading = false;
-         _errorMessage = "Failed to load banquet links: $e";
+         _errorMessage = "Failed to load home: $e";
        });
      }
   }
@@ -218,6 +199,16 @@ class _DBViewerPageState extends State<DBViewerPage> {
     });
 
     try {
+      // Check if input is a SQL command (basic heuristic)
+      final upperPath = path.trim().toUpperCase();
+      if (upperPath.startsWith('SELECT') || 
+          upperPath.startsWith('PRAGMA') || 
+          upperPath.startsWith('WITH') ||
+          upperPath.startsWith('EXPLAIN')) {
+         await _executeQuery(path);
+         return;
+      }
+
       // First try local if it's a known database extension
       if (path.endsWith('.db') || path.endsWith('.sqlite')) {
         final type = await FileSystemEntity.type(path);
@@ -234,6 +225,56 @@ class _DBViewerPageState extends State<DBViewerPage> {
         _isLoading = false;
         _errorMessage = e.toString();
       });
+    }
+  }
+
+  Future<void> _executeQuery(String sql) async {
+    // Determine target DB
+    // If we are in "Home" mode, we might want to run against home.sqlite?
+    // User requested "Command Palette backend", so maybe.
+    // If in "Data" mode, run against current DB.
+    
+    // We already have a connected DB in _dbService (either Home or Data).
+    // So just run it.
+    
+    setState(() {
+       _isLoading = true;
+       _gridTitle = "Query Result";
+    });
+    
+    try {
+       final results = await _dbService.executeQuery(sql);
+       
+       if (results.isEmpty) {
+          setState(() {
+             _gridColumns = [TrinaColumn(field: 'info', title: 'Info', width: 300, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false)];
+             _totalRows = 0;
+             _isLoading = false;
+             _errorMessage = "Query returned no results.";
+          });
+       } else {
+          _optimizeColumns("Query", results);
+          
+          // For ad-hoc queries, we serve from memory (results)
+          // We need to override _fetchRows to serve this static list
+          setState(() {
+             _viewType = 2; // Query Mode
+             _cachedBanquetRows = results.map((row) {
+                 final cells = <String, TrinaCell>{};
+                 row.forEach((key, value) {
+                    cells[key] = TrinaCell(value: value?.toString() ?? '');
+                 });
+                 return TrinaRow(cells: cells);
+             }).toList();
+             _totalRows = results.length;
+             _isLoading = false;
+          });
+       }
+    } catch (e) {
+       setState(() {
+          _isLoading = false;
+          _errorMessage = "Query failed: $e";
+       });
     }
   }
 
@@ -254,7 +295,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
     }
   }
 
-  Future<void> _openDatabaseFile(String path) async {
+  Future<void> _openDatabaseFile(String path, {bool isHome = false}) async {
     // Only open .db and .sqlite files
     if (!path.endsWith('.db') && !path.endsWith('.sqlite')) {
        throw Exception("Only .db and .sqlite files are supported for local opening.");
@@ -265,19 +306,56 @@ class _DBViewerPageState extends State<DBViewerPage> {
       final tables = await _dbService.getTables();
       
       setState(() {
-        _viewType = 1; // Database Mode
+        _viewType = isHome ? 0 : 1;
         _isLoading = false;
-        if (tables.isNotEmpty) {
-           _currentTableName = tables.first;
+        // For Home, prefer "2_banquet_links" or "0_quick_links"
+        if (isHome) {
+            if (tables.contains("2_banquet_links")) {
+                _currentTableName = "2_banquet_links";
+            } else if (tables.contains("0_quick_links")) {
+                _currentTableName = "0_quick_links";
+            } else if (tables.isNotEmpty) {
+                 _currentTableName = tables.first;
+            }
+        } else {
+            if (tables.isNotEmpty) {
+               _currentTableName = tables.first;
+            }
         }
       });
       
       if (_currentTableName != null) {
         await _loadTableMetadata(_currentTableName!);
       }
+      
+      if (!isHome) {
+         _recordRecentFile(path);
+      }
     } catch (e) {
        throw Exception("Failed to open database: $e");
     }
+  }
+
+  Future<void> _recordRecentFile(String dbPath) async {
+     if (_homePath == null) return;
+     try {
+       // Open home db temporarily
+       // We use a separate connection to avoid messing with the main view
+       final homeDb = await openDatabase(_homePath!);
+       
+       final fileSizeMb = File(dbPath).existsSync() ? (File(dbPath).lengthSync() / (1024 * 1024)) : 0.0;
+       
+       await homeDb.insert('1_recent_files', {
+          'filename': p.basename(dbPath),
+          'path': dbPath,
+          'last_opened': DateTime.now().toIso8601String(),
+          'size_mb': fileSizeMb
+       }, conflictAlgorithm: ConflictAlgorithm.replace);
+       
+       await homeDb.close();
+     } catch (e) {
+       debugPrint("Failed to record recent file: $e");
+     }
   }
 
   Future<void> _loadTableMetadata(String tableName) async {
@@ -315,15 +393,13 @@ class _DBViewerPageState extends State<DBViewerPage> {
   }
 
   Future<List<TrinaRow>> _fetchRows(int offset) async {
-    if (_viewType == 0) {
-      // Banquet Links - cached
-      // Simulate pagination if needed, but we loaded all at once
-      if (offset >= _cachedBanquetRows.length) return [];
-      return _cachedBanquetRows.skip(offset).take(100).toList();
-    } else {
-      // Database Table
-      return _fetchDatabaseRows(offset);
+    if (_viewType == 2) {
+       // Query Mode (In-Memory)
+       if (offset >= _cachedBanquetRows.length) return [];
+       return _cachedBanquetRows.skip(offset).take(100).toList();
     }
+    // Always fetch from DB now for Home (0) and Data (1)
+    return _fetchDatabaseRows(offset);
   }
 
   Future<List<TrinaRow>> _fetchDatabaseRows(int offset) async {
@@ -512,10 +588,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
               label: 'Go Home',
               shortcut: const CharacterActivator('h', meta: true),
               onSelected: () {
-                setState(() {
-                  _pathController.clear();
-                });
-                _loadBanquetLinks();
+                _loadHome();
               },
             ),
             PlatformMenuItem(
@@ -560,12 +633,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
           pathController: _pathController,
           flightService: _flightService,
           onHomeTap: () {
-            setState(() {
-              _isLoading = false;
-              _errorMessage = null;
-              _pathController.clear();
-            });
-            _loadBanquetLinks();
+            _loadHome();
           },
           onNavigate: (path) {
             _pathController.text = path;
@@ -591,21 +659,30 @@ class _DBViewerPageState extends State<DBViewerPage> {
                totalRows: _totalRows,
                onFetchRows: _fetchRows,
                onRowDoubleTap: (row) {
-                  // Only relevant for Banquet View
-                  if (_viewType == 0) {
-                      final path = row.cells['path']?.value;
-                      if (path != null) {
-                         // path value has emoji, we can use raw_path if we had it, or just parse
-                         // Actually our row has 'raw_path' cell (invisible maybe, or visible?)
-                         // The column definition only shows 'path', 'desc', 'original_url'.
-                         String? rawPath = row.cells['raw_path']?.value?.toString();
-                         // If raw_path is missing (it shouldn't be), try parsing
-                         if (rawPath == null || rawPath.isEmpty) {
-                            rawPath = path.toString().replaceAll('📁 ', '').replaceAll('📄 ', '');
-                         }
-                         
-                         _pathController.text = rawPath;
-                         _loadPath();
+                  // Interaction Logic
+                  if (_viewType == 0) { // Home Mode
+                      if (_currentTableName == "2_banquet_links") {
+                          final path = row.cells['original_url']?.value?.toString();
+                          if (path != null) {
+                             _loadPath(pathOverride: path);
+                          }
+                      } else if (_currentTableName == "1_recent_files") {
+                          final path = row.cells['path']?.value?.toString();
+                          if (path != null) {
+                             _loadPath(pathOverride: path);
+                          }
+                      } else if (_currentTableName == "3_query_styles") {
+                          final sql = row.cells['sql']?.value?.toString();
+                          if (sql != null) {
+                             Clipboard.setData(ClipboardData(text: sql));
+                             // Optional: Show a toast/snackbar? 
+                             // For now, maybe just flash the title?
+                             final oldTitle = _gridTitle;
+                             setState(() => _gridTitle = "Copied to Clipboard!");
+                             Future.delayed(const Duration(seconds: 1), () {
+                                if (mounted) setState(() => _gridTitle = oldTitle);
+                             });
+                          }
                       }
                   }
                },
@@ -635,8 +712,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
           PushButton(
              controlSize: ControlSize.large,
              onPressed: () {
-               setState(() { _errorMessage = null; });
-               _loadBanquetLinks();
+               _loadHome();
              }, 
              child: const Text('Go Home')
           ),
