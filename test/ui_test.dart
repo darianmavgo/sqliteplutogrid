@@ -111,10 +111,10 @@ void main() {
       
       await tester.pumpAndSettle();
       
-      expect(find.byIcon(CupertinoIcons.cloud), findsOneWidget);
+      expect(find.text('🔥'), findsOneWidget);
     });
 
-    testWidgets('Switch to Flight Mode shows links', (WidgetTester tester) async {
+    testWidgets('Home Button loads Banquet Links', (WidgetTester tester) async {
        tester.view.physicalSize = const Size(1200, 800);
        tester.view.devicePixelRatio = 1.0;
        addTearDown(tester.view.resetPhysicalSize);
@@ -128,14 +128,14 @@ void main() {
       
       await tester.pumpAndSettle();
       
-      // Find cloud icon
-      final cloudIcon = find.byIcon(CupertinoIcons.cloud);
-      expect(cloudIcon, findsOneWidget);
+      // Find Flame icon
+      final homeIcon = find.text('🔥');
+      expect(homeIcon, findsOneWidget);
       
-      await tester.tap(cloudIcon);
+      await tester.tap(homeIcon);
       await tester.pumpAndSettle();
       
-      // Verify "Banquet Links" header appears
+      // Verify "Banquet Links" header appears (as table name in grid)
       expect(find.text('Banquet Links'), findsOneWidget);
     });
   });

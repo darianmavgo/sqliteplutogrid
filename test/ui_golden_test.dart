@@ -6,7 +6,7 @@ import 'package:pocketbase/pocketbase.dart';
 import 'package:sqliter/main.dart';
 import 'package:sqliter/flight_service.dart';
 import 'package:sqliter/db_service.dart';
-import 'package:sqliter/widgets/flight_banquet_view.dart';
+import 'package:sqliter/widgets/database_grid_view.dart';
 
 // --- Manual Mocks (Simplified) ---
 class MockFlightService extends FlightService {
@@ -95,8 +95,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // Assert Visuals
-    // 1. Flight/Banquet view should be visible by default now
-    expect(find.byType(FlightBanquetView), findsOneWidget);
+    // 1. DatabaseGridView should be visible (displaying banquet links)
+    expect(find.byType(DatabaseGridView), findsOneWidget);
     
     // 2. Dashboard Content (the welcome message might be in the view)
 

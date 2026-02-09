@@ -5,19 +5,17 @@ import 'package:flutter/cupertino.dart';
 import 'package:trina_grid/trina_grid.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 // ignore: depend_on_referenced_packages
-import 'package:pocketbase/pocketbase.dart'; 
+// import 'package:pocketbase/pocketbase.dart'; 
 import 'package:macos_ui/macos_ui.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:file_picker/file_picker.dart';
 
 import 'db_service.dart';
 import 'flight_service.dart';
-import 'models/view_mode.dart';
 import 'utils/formatters.dart';
 
 import 'widgets/app_toolbar.dart';
 import 'widgets/database_grid_view.dart';
-import 'widgets/flight_banquet_view.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -91,23 +89,26 @@ class _DBViewerPageState extends State<DBViewerPage> {
   late final FlightService _flightService;
 
   // State
-  ViewMode _currentMode = ViewMode.flight;
   bool _isLoading = false;
   String? _errorMessage;
-  bool _isFlightConnected = false;
   
   // Controller
   final TextEditingController _pathController = TextEditingController();
 
   // Data
   final GlobalKey _gridKey = GlobalKey(); // To trigger grid reloads
-  List<TrinaRow> _flightRows = [];
-  List<String> _tables = [];
-  String? _selectedTable;
-  List<TrinaColumn> _dbColumns = [];
-  int? _totalRows; // Total rows in current table
-  String? _converterEmoji;
-  List<RecordModel> _queryStyles = [];
+  
+  // Unified Grid Data State
+  List<TrinaColumn> _gridColumns = [];
+  String? _gridTitle;
+  int? _totalRows;
+  
+  // We need to keep track of what we are viewing to fetch correct rows
+  // 0 = Banquet Links (Default home)
+  // 1 = Database Table
+  int _viewType = 0; 
+  String? _currentTableName; // For DB view
+  List<TrinaRow> _cachedBanquetRows = []; // For Banquet view
 
   @override
   void initState() {
@@ -117,32 +118,61 @@ class _DBViewerPageState extends State<DBViewerPage> {
     _flightService = widget.flightService ?? FlightService();
     _dbService = widget.dbService ?? DatabaseService();
     
-    
-    
     // Perform async initialization
     _initServices();
     
-    // Initial checks
-    _autoConnectFlight();
+    // Initial checks - Load Banquet Links as "Home"
+    _loadBanquetLinks();
   }
 
   Future<void> _initServices() async {
     // Initialize services if needed
   }
   
-  Future<void> _autoConnectFlight() async {
+  Future<void> _loadBanquetLinks() async {
+     setState(() {
+       _isLoading = true;
+       _errorMessage = null;
+       _viewType = 0;
+       _gridTitle = "Banquet Links";
+       _currentTableName = null;
+       _totalRows = null;
+     });
+     
      try {
-       // Simple health check or just assume connected if URL is set
-       // For now, no-op or check status endpoint if available
+       final links = await _flightService.getBanquetLinks();
+       final rows = links.map((record) {
+             final path = record.data['original_url'] ?? '';
+             final desc = record.data['description'] ?? '';
+             final isFolder = desc.toLowerCase().contains('folder') || !path.contains('.');
+             final displayPath = isFolder ? '📁 $path' : '📄 $path';
+             
+             return TrinaRow(
+                cells: {
+                  'id': TrinaCell(value: record.id),
+                  'path': TrinaCell(value: displayPath),
+                  'raw_path': TrinaCell(value: path),
+                  'desc': TrinaCell(value: record.data['description'] ?? ''),
+                  'original_url': TrinaCell(value: record.data['original_url'] ?? ''),
+                }
+             );
+           }).toList();
+
        setState(() {
-         _isFlightConnected = true; 
+          _cachedBanquetRows = rows;
+          _gridColumns = [
+              TrinaColumn(field: 'path', title: 'Banquet Path (Double Click)', width: 500, frozen: TrinaColumnFrozen.start, type: TrinaColumnType.text()),
+              TrinaColumn(field: 'desc', title: 'Details', width: 300, type: TrinaColumnType.text()),
+              TrinaColumn(field: 'original_url', title: 'Source', width: 400, type: TrinaColumnType.text()),
+          ];
+          _totalRows = rows.length;
+          _isLoading = false;
        });
-     
-     // Load query styles
-     _queryStyles = await _flightService.getQueryStyles();
-     
-   } catch (e) {
-       debugPrint("Flight auto-connect failed: $e");
+     } catch (e) {
+       setState(() {
+         _isLoading = false;
+         _errorMessage = "Failed to load banquet links: $e";
+       });
      }
   }
 
@@ -164,11 +194,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
-      _tables.clear();
-      _selectedTable = null;
-      _dbColumns.clear();
+      _gridColumns.clear();
       _totalRows = null;
-      _converterEmoji = null;
     });
 
     try {
@@ -182,7 +209,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
       }
 
       // Otherwise, use Banquet Sync (Flight3 server)
-      // This handles directories, non-sqlite files (conversion), and remote banquet URLs
       await _handleOfflineAccess(path);
     } catch (e) {
       setState(() {
@@ -212,27 +238,23 @@ class _DBViewerPageState extends State<DBViewerPage> {
   Future<void> _openDatabaseFile(String path) async {
     // Only open .db and .sqlite files
     if (!path.endsWith('.db') && !path.endsWith('.sqlite')) {
-       throw Exception("Only .db and .sqlite files are supported for local opening. Use Flight for other formats.");
+       throw Exception("Only .db and .sqlite files are supported for local opening.");
     }
     try {
       await _dbService.connect(path);
       
       final tables = await _dbService.getTables();
-      final userVersion = await _dbService.getUserVersion();
-      final emoji = Formatters.getConverterEmoji(userVersion);
       
       setState(() {
-        _currentMode = ViewMode.database;
-        _tables = tables;
+        _viewType = 1; // Database Mode
         _isLoading = false;
-        _converterEmoji = emoji;
         if (tables.isNotEmpty) {
-           _selectedTable = tables.first;
+           _currentTableName = tables.first;
         }
       });
       
-      if (_selectedTable != null) {
-        await _loadTableMetadata(_selectedTable!);
+      if (_currentTableName != null) {
+        await _loadTableMetadata(_currentTableName!);
       }
     } catch (e) {
        throw Exception("Failed to open database: $e");
@@ -242,7 +264,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
   Future<void> _loadTableMetadata(String tableName) async {
     setState(() {
        _isLoading = true;
-       // Don't clear tables/etc, just reloading view
+       _gridTitle = tableName;
     });
 
     try {
@@ -258,19 +280,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
       // Get count
       final count = await _dbService.countRows(tableName);
 
-      // Apply query style defaults if any
-      final style = _queryStyles.firstWhere(
-        (s) => s.data['style_name'] == 'sqlite', 
-        orElse: () => RecordModel()
-      );
-      
-      if (style.id.isNotEmpty) {
-        // Apply limit from style if needed, or stick to 200
-        // For now just ensuring it doesn't crash
-      }
-
       setState(() {
-        _dbColumns = columns;
+        _gridColumns = columns;
         _totalRows = count;
         _isLoading = false;
       });
@@ -282,15 +293,27 @@ class _DBViewerPageState extends State<DBViewerPage> {
     }
   }
 
+  Future<List<TrinaRow>> _fetchRows(int offset) async {
+    if (_viewType == 0) {
+      // Banquet Links - cached
+      // Simulate pagination if needed, but we loaded all at once
+      if (offset >= _cachedBanquetRows.length) return [];
+      return _cachedBanquetRows.skip(offset).take(100).toList();
+    } else {
+      // Database Table
+      return _fetchDatabaseRows(offset);
+    }
+  }
+
   Future<List<TrinaRow>> _fetchDatabaseRows(int offset) async {
-    if (_selectedTable == null) return [];
+    if (_currentTableName == null) return [];
     
     try {
-      final rowsData = await _dbService.fetchRows(_selectedTable!, limit: 200, offset: offset);
+      final rowsData = await _dbService.fetchRows(_currentTableName!, limit: 200, offset: offset);
       
       // If this is the initial load (offset 0), we can optimize columns
       if (offset == 0 && rowsData.isNotEmpty) {
-        _optimizeColumns(_selectedTable!, rowsData);
+        _optimizeColumns(_currentTableName!, rowsData);
       }
 
       return rowsData.map((row) {
@@ -358,100 +381,11 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
     if (optimizedColumns.isNotEmpty) {
       setState(() {
-        _dbColumns = optimizedColumns;
+        _gridColumns = optimizedColumns;
       });
     }
   }
   
-  // ---------------------------------------------------------------------------
-  // Remote / Flight Logic
-  // ---------------------------------------------------------------------------
-  
-  Future<void> _connectToFlight() async {
-     setState(() {
-       _currentMode = ViewMode.flight;
-       _isLoading = true;
-       _errorMessage = null;
-     });
-     
-     // Load banquet links
-     try {
-       final links = await _flightService.getBanquetLinks();
-        setState(() {
-           _flightRows = links.map((record) {
-             final path = record.data['original_url'] ?? '';
-             final desc = record.data['description'] ?? '';
-             final isFolder = desc.toLowerCase().contains('folder') || !path.contains('.');
-             final displayPath = isFolder ? '📁 $path' : '📄 $path';
-             
-             return TrinaRow(
-                cells: {
-                  'id': TrinaCell(value: record.id),
-                  'path': TrinaCell(value: displayPath),
-                  'raw_path': TrinaCell(value: path),
-                  'desc': TrinaCell(value: record.data['description'] ?? ''),
-                  'original_url': TrinaCell(value: record.data['original_url'] ?? ''),
-                }
-             );
-           }).toList();
-           _isLoading = false;
-           _isFlightConnected = true;
-        });
-     } catch (e) {
-       setState(() {
-         _isLoading = false;
-         _errorMessage = "Failed to connect to Flight: $e";
-       });
-     }
-  }
-
-  Future<void> _showPower2Analysis() async {
-    if (_selectedTable == null) return;
-    
-    setState(() { _isLoading = true; });
-    try {
-      final samples = await _dbService.fetchPower2Samples(_selectedTable!);
-      setState(() { _isLoading = false; });
-      
-      if (!mounted) return;
-      
-      final sampleText = samples.isEmpty 
-          ? 'No rows found for sampling.'
-          : samples.asMap().entries.map((e) {
-              final row = e.value;
-              final rowId = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512][e.key];
-              // Pick first 3 keys to show
-              final keys = row.keys.take(3).toList();
-              final values = keys.map((k) => '$k: ${row[k]}').join(', ');
-              return 'Row $rowId: $values';
-            }).join('\n');
-
-      showMacosAlertDialog(
-        context: context,
-        builder: (context) => MacosAlertDialog(
-          appIcon: const Icon(CupertinoIcons.bolt_fill, size: 64, color: MacosColors.systemYellowColor),
-          title: const Text('Power2 Analysis'),
-          message: SingleChildScrollView(
-            child: Text(
-              'Sampling ${_selectedTable!} at powers of 2:\n\n$sampleText',
-              style: MacosTheme.of(context).typography.caption1,
-            ),
-          ),
-          primaryButton: PushButton(
-            controlSize: ControlSize.large,
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-        ),
-      );
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = "Analysis failed: $e";
-      });
-    }
-  }
-
   Future<void> _handleOfflineAccess(String banquetPath) async {
     setState(() { _isLoading = true; });
     try {
@@ -460,13 +394,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
       
       if (serverPath == null) throw Exception("Server returned no path");
       
-      // If needed, download logic here. For now assume local path if simple.
-      // Actually syncBanquet returns where it is on server.
-      // Client needs to access it via /sqliter/file/ proxy or similar?
-      // Or maybe _openDatabaseFile works if it's a local path relative to something?
-      // Original logic implies downloading.
-      
-      // Simulating "Done" for now as we don't have download logic fully extracted
       _pathController.text = serverPath;
       await _openDatabaseFile(serverPath);
     } catch (e) {
@@ -509,7 +436,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
           ],
         ),
         PlatformMenu(
-          label: 'File',
+          label: '🍎',
           menus: [
             PlatformMenuItem(
               label: 'Open...',
@@ -519,70 +446,39 @@ class _DBViewerPageState extends State<DBViewerPage> {
           ],
         ),
         PlatformMenu(
-          label: 'View',
+          label: '🍊',
           menus: [
             PlatformMenuItem(
               label: 'Go Home',
               shortcut: const CharacterActivator('h', meta: true),
               onSelected: () {
                 setState(() {
-                  _currentMode = ViewMode.flight;
                   _pathController.clear();
                 });
+                _loadBanquetLinks();
               },
-            ),
-            PlatformMenuItem(
-              label: 'Flight Server',
-              shortcut: const CharacterActivator('f', meta: true),
-              onSelected: _connectToFlight,
             ),
           ],
         ),
       ],
       child: MacosWindow(
         child: MacosScaffold(
-        toolBar: buildAppToolbar(
-        context: context,
-        currentMode: _currentMode,
-        isFlightConnected: _isFlightConnected,
-        isLoading: _isLoading,
-        pathController: _pathController,
-        flightService: _flightService,
-        tables: _tables,
-        selectedTable: _selectedTable,
-        totalRows: _totalRows,
-        converterEmoji: _converterEmoji,
-        onPower2: _showPower2Analysis,
-        onHomeTap: () {
-          setState(() {
-            _currentMode = ViewMode.flight;
-            _isLoading = false;
-            _errorMessage = null;
-            _pathController.clear();
-          });
-        },
-        onNavigate: (path) {
-          _pathController.text = path;
-          _loadPath();
-        },
-        onConnectFlight: _connectToFlight,
-        onTableChanged: (val) {
-           setState(() {
-             _selectedTable = val;
-           });
-           _loadTableMetadata(val);
-        },
-        onExportCsv: () {
-           // Handled inside GridView via callback if needed, but here we pass totalRows?
-           // DatabaseGridView now handles export internally via button.
-           // So this callback might be redundant if the button is inside the grid view only.
-           // But AppToolbar might have an export button too?
-           // The extraction put buttons in Toolbar AND Grid stats header.
-           // If Toolbar button is pressed, we need a GlobalKey<DatabaseGridViewState> maybe?
-        },
-        onJumpToRow: () {
-           // Same as export
-        },
+        toolBar: buildBanquetBar(
+          context: context,
+          pathController: _pathController,
+          flightService: _flightService,
+          onHomeTap: () {
+            setState(() {
+              _isLoading = false;
+              _errorMessage = null;
+              _pathController.clear();
+            });
+            _loadBanquetLinks();
+          },
+          onNavigate: (path) {
+            _pathController.text = path;
+            _loadPath();
+          },
       ),
       children: [
         ContentArea(
@@ -595,28 +491,33 @@ class _DBViewerPageState extends State<DBViewerPage> {
                return const Center(child: ProgressCircle());
              }
              
-             switch (_currentMode) {
-               case ViewMode.database:
-                 return DatabaseGridView(
-                   key: _gridKey,
-                   columns: _dbColumns,
-                   tableName: _selectedTable,
-                   totalRows: _totalRows,
-                   onFetchRows: _fetchDatabaseRows,
-                 );
-                 
-               case ViewMode.flight:
-                 return FlightBanquetView(
-                   rows: _flightRows,
-                   onRowDoubleTap: (row) {
+             // UNIFIED GRID VIEW
+             return DatabaseGridView(
+               key: _gridKey,
+               columns: _gridColumns,
+               tableName: _gridTitle,
+               totalRows: _totalRows,
+               onFetchRows: _fetchRows,
+               onRowDoubleTap: (row) {
+                  // Only relevant for Banquet View
+                  if (_viewType == 0) {
                       final path = row.cells['path']?.value;
                       if (path != null) {
-                         _pathController.text = path.toString();
-                         _loadPath(); // Use centralized loadPath
+                         // path value has emoji, we can use raw_path if we had it, or just parse
+                         // Actually our row has 'raw_path' cell (invisible maybe, or visible?)
+                         // The column definition only shows 'path', 'desc', 'original_url'.
+                         String? rawPath = row.cells['raw_path']?.value?.toString();
+                         // If raw_path is missing (it shouldn't be), try parsing
+                         if (rawPath == null || rawPath.isEmpty) {
+                            rawPath = path.toString().replaceAll('📁 ', '').replaceAll('📄 ', '');
+                         }
+                         
+                         _pathController.text = rawPath;
+                         _loadPath();
                       }
-                   },
-                 );
-             }
+                  }
+               },
+             );
           },
         ),
       ],
@@ -642,7 +543,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
           PushButton(
              controlSize: ControlSize.large,
              onPressed: () {
-               setState(() { _errorMessage = null; _currentMode = ViewMode.flight; });
+               setState(() { _errorMessage = null; });
+               _loadBanquetLinks();
              }, 
              child: const Text('Go Home')
           ),

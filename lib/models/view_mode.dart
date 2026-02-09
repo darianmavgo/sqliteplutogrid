@@ -1,4 +1,0 @@
-enum ViewMode {
-  database,
-  flight,
-}
