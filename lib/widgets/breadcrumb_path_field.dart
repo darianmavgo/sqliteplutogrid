@@ -28,6 +28,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
   final FocusNode _focusNode = FocusNode();
   List<_PathSegment> _cachedSegments = [];
   String _lastParsedPath = '';
+  final ScrollController _scrollController = ScrollController();
   
   @override
   void initState() {
@@ -44,6 +45,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
   @override
   void dispose() {
     _focusNode.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
   
@@ -64,6 +66,13 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
       setState(() {
         _cachedSegments = segments;
         _lastParsedPath = path;
+      });
+
+      // Auto-scroll to end
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
       });
     } catch (e) {
       // Fallback to simple split for local paths
@@ -89,6 +98,14 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
       setState(() {
         _cachedSegments = segments;
         _lastParsedPath = path;
+      });
+
+      // Auto-scroll to end
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // Ensure controller is attached before jumping
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
       });
     }
   }
@@ -137,52 +154,49 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
         ),
         child: Row(
           children: [
+            // Leading indicator
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(
+                widget.controller.text.startsWith('~') ? '' : '/',
+                style: MacosTheme.of(context).typography.body.copyWith(
+                  fontSize: 13,
+                  color: MacosColors.white.withValues(alpha: 0.5),
+                ),
+              ),
+            ),
+            
+            // Scrollable Breadcrumbs
             Expanded(
-              child: SingleChildScrollView(
+              child: ListView.separated(
+                controller: _scrollController,
                 scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    // Leading indicator (simplified to just / or ~)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 2),
-                      child: Text(
-                        widget.controller.text.startsWith('~') ? '' : '/',
-                        style: MacosTheme.of(context).typography.body.copyWith(
-                          fontSize: 13,
-                          color: _cachedSegments.isNotEmpty && _cachedSegments.first.exists
-                              ? MacosColors.systemGreenColor.withValues(alpha: 0.8)
-                              : MacosColors.systemRedColor.withValues(alpha: 0.8),
-                        ),
+                itemCount: _cachedSegments.length,
+                separatorBuilder: (context, index) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Center(
+                    child: Text(
+                      '/',
+                      style: MacosTheme.of(context).typography.body.copyWith(
+                        fontSize: 13,
+                        color: MacosColors.white.withValues(alpha: 0.3),
                       ),
                     ),
-                    
-                    // Breadcrumb segments
-                    for (int i = 0; i < _cachedSegments.length; i++) ...[
-                      _BreadcrumbSegment(
-                        segment: _cachedSegments[i],
-                        isLast: i == _cachedSegments.length - 1,
-                        onTap: () {
-                          if (_cachedSegments[i].path.isNotEmpty) {
-                            widget.onNavigate(_cachedSegments[i].path);
-                          }
-                        },
-                      ),
-                      
-                      // Separator
-                      if (i < _cachedSegments.length - 1)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 2),
-                          child: Text(
-                            '/',
-                            style: MacosTheme.of(context).typography.body.copyWith(
-                              fontSize: 13,
-                              color: MacosColors.white.withValues(alpha: 0.3),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ],
+                  ),
                 ),
+                itemBuilder: (context, index) {
+                  return Center(
+                    child: _BreadcrumbSegment(
+                      segment: _cachedSegments[index],
+                      isLast: index == _cachedSegments.length - 1,
+                      onTap: () {
+                         if (_cachedSegments[index].path.isNotEmpty) {
+                           widget.onNavigate(_cachedSegments[index].path);
+                         }
+                      },
+                    ),
+                  );
+                },
               ),
             ),
             
