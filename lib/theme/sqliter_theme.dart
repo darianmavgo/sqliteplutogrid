@@ -49,9 +49,7 @@ class SqliterTheme {
         // Icon colors
         iconColor: theme.iconTheme.color ?? (isDark ? Colors.white70 : Colors.black54),
       ),
-      columnFilter: const TrinaGridColumnFilterConfig(
-        filters: [], // No filters by default to avoid clutter
-      ),
+
     );
   }
 }

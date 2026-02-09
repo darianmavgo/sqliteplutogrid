@@ -27,7 +27,7 @@ void main() async {
     center: true,
     backgroundColor: Colors.transparent,
     skipTaskbar: false,
-    titleBarStyle: TitleBarStyle.normal,
+    titleBarStyle: TitleBarStyle.hidden,
   );
   
   windowManager.waitUntilReadyToShow(windowOptions, () async {
@@ -143,6 +143,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
   }
   
   Future<void> _loadBanquetLinks() async {
+     // Reset title
+     windowManager.setTitle('🍊');
      setState(() {
        _isLoading = true;
        _errorMessage = null;
@@ -174,7 +176,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
        setState(() {
           _cachedBanquetRows = rows;
           _gridColumns = [
-              TrinaColumn(field: 'path', title: 'Banquet Path (Double Click)', width: 500, frozen: TrinaColumnFrozen.start, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false, enableDropToResize: false),
+              TrinaColumn(field: 'path', title: 'Banquet Path (Double Click)', width: 500, frozen: TrinaColumnFrozen.start, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false),
               TrinaColumn(field: 'desc', title: 'Details', width: 300, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false),
               TrinaColumn(field: 'original_url', title: 'Source', width: 400, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false),
           ];
@@ -208,12 +210,11 @@ class _DBViewerPageState extends State<DBViewerPage> {
     if (pathOverride != null) {
       _pathController.text = path;
     }
+    windowManager.setTitle('🍊 $path');
 
     setState(() {
       _isLoading = true;
       _errorMessage = null;
-      _gridColumns.clear();
-      _totalRows = null;
     });
 
     try {
@@ -417,6 +418,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
       if (serverPath == null) throw Exception("Server returned no path");
       
       _pathController.text = serverPath;
+      windowManager.setTitle('🍊 $serverPath');
       await _openDatabaseFile(serverPath);
     } catch (e) {
       debugPrint("Flight3 sync failed: $e. Falling back to native picker.");
@@ -442,6 +444,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
           // User picked a file, open it
           final pickedPath = result.files.single.path!;
           _pathController.text = pickedPath; // Update URL bar
+          windowManager.setTitle('🍊 $pickedPath');
           await _openDatabaseFile(pickedPath);
           return;
         } else {

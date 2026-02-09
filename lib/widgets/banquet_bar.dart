@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'breadcrumb_path_field.dart';
+import 'package:window_manager/window_manager.dart';
 import '../flight_service.dart';
 
 ToolBar buildBanquetBar({
@@ -12,9 +13,16 @@ ToolBar buildBanquetBar({
   required VoidCallback onHomeTap,
 }) {
   return ToolBar(
+    automaticallyImplyLeading: false,
+    leading: const SizedBox(),
+    alignment: Alignment.centerLeft,
     titleWidth: 5000,
     title: Row(
       children: [
+        // Traffic Lights padding + Draggable area
+        const DragToMoveArea(
+          child: SizedBox(width: 52 + 12.0, height: 40), 
+        ),
         Expanded(
           child: BreadcrumbPathField(
             controller: pathController,
@@ -22,6 +30,10 @@ ToolBar buildBanquetBar({
             onNavigate: onNavigate,
             flightService: flightService, 
           ),
+        ),
+        // Add trailing drag area just in case (optional, but good for UX if path is short)
+        const DragToMoveArea(
+             child: SizedBox(width: 16, height: 40),
         ),
       ],
     ),
