@@ -92,6 +92,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
           setState(() {
             _isEditMode = false;
           });
+          widget.onNavigate(value);
         },
         suffix: widget.suffix,
       );
@@ -131,7 +132,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
                     Padding(
                       padding: const EdgeInsets.only(right: 2),
                       child: Text(
-                        widget.controller.text.startsWith('~') ? '~' : '/',
+                        widget.controller.text.startsWith('~') ? '' : '/',
                         style: TextStyle(
                           fontSize: 13,
                           color: _cachedSegments.isNotEmpty && _cachedSegments.first.exists
@@ -143,43 +144,14 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
                     
                     // Breadcrumb segments
                     for (int i = 0; i < _cachedSegments.length; i++) ...[
-                      GestureDetector(
-                        onDoubleTap: () {
-                          final segment = _cachedSegments[i];
-                          if (segment.path.isNotEmpty) {
-                            widget.onNavigate(segment.path);
+                      _BreadcrumbSegment(
+                        segment: _cachedSegments[i],
+                        isLast: i == _cachedSegments.length - 1,
+                        onTap: () {
+                          if (_cachedSegments[i].path.isNotEmpty) {
+                            widget.onNavigate(_cachedSegments[i].path);
                           }
                         },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.transparent,
-                            borderRadius: BorderRadius.circular(3),
-                          ),
-                          child: MouseRegion(
-                            cursor: SystemMouseCursors.click,
-                            child: Builder(
-                              builder: (context) {
-                                final segment = _cachedSegments[i];
-                                final exists = segment.exists;
-                                return Text(
-                                  segment.text,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: exists 
-                                        ? (i == _cachedSegments.length - 1 ? Colors.white : Colors.white.withOpacity(0.7))
-                                        : MacosColors.systemRedColor,
-                                    fontWeight: i == _cachedSegments.length - 1
-                                        ? FontWeight.w500
-                                        : FontWeight.normal,
-                                    decoration: exists ? null : TextDecoration.lineThrough,
-                                    decorationColor: MacosColors.systemRedColor,
-                                  ),
-                                );
-                              }
-                            ),
-                          ),
-                        ),
                       ),
                       
                       // Separator
@@ -232,6 +204,58 @@ class _PathSegment {
       path: json['path'] ?? '',
       exists: json['exists'] ?? false,
       type: json['type'] ?? 'unknown',
+    );
+  }
+}
+
+class _BreadcrumbSegment extends StatefulWidget {
+  final _PathSegment segment;
+  final bool isLast;
+  final VoidCallback onTap;
+
+  const _BreadcrumbSegment({
+    required this.segment,
+    required this.isLast,
+    required this.onTap,
+  });
+
+  @override
+  State<_BreadcrumbSegment> createState() => _BreadcrumbSegmentState();
+}
+
+class _BreadcrumbSegmentState extends State<_BreadcrumbSegment> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final exists = widget.segment.exists;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          decoration: BoxDecoration(
+            color: _isHovered ? Colors.white.withOpacity(0.1) : Colors.transparent,
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(
+            widget.segment.text,
+            style: TextStyle(
+              fontSize: 13,
+              color: exists 
+                  ? (widget.isLast ? Colors.white : Colors.white.withOpacity(0.7))
+                  : MacosColors.systemRedColor,
+              fontWeight: widget.isLast ? FontWeight.w500 : FontWeight.normal,
+              decoration: exists ? null : TextDecoration.lineThrough,
+              decorationColor: MacosColors.systemRedColor,
+              backgroundColor: _isHovered ? Colors.white.withOpacity(0.05) : null,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

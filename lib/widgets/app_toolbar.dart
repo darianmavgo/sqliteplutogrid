@@ -14,13 +14,14 @@ ToolBar buildAppToolbar({
   required VoidCallback onHomeTap,
   required Function(String) onNavigate,
   required VoidCallback onConnectFlight,
-  required Function(String) onOfflineAccess,
+  required VoidCallback onPower2,
   required VoidCallback onExportCsv,
   required VoidCallback onJumpToRow,
   required List<String> tables,
   required String? selectedTable,
   required Function(String) onTableChanged,
   required int? totalRows,
+  required String? converterEmoji,
   required FlightService flightService,
 }) {
   return ToolBar(
@@ -47,7 +48,17 @@ ToolBar buildAppToolbar({
             ),
           ),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 8),
+        // Flight button
+        MacosIconButton(
+          icon: Icon(
+            CupertinoIcons.cloud,
+            color: isFlightConnected ? MacosColors.systemGreenColor : Colors.white.withOpacity(0.5),
+            size: 20,
+          ),
+          onPressed: onConnectFlight,
+        ),
+        const SizedBox(width: 8),
         Expanded(
           child: BreadcrumbPathField(
             controller: pathController,
@@ -75,19 +86,7 @@ ToolBar buildAppToolbar({
                 if (totalRows != null)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                    child: Text("Rows: $totalRows", style: MacosTheme.of(context).typography.caption1),
-                  ),
-                MacosIconButton(
-                  icon: Icon(
-                    CupertinoIcons.cloud_upload,
-                    color: isFlightConnected ? MacosColors.systemGreenColor : MacosColors.systemGrayColor,
-                  ),
-                  onPressed: onConnectFlight,
-                ),
-                if (currentMode == ViewMode.flight && pathController.text.isNotEmpty)
-                  MacosIconButton(
-                    icon: const Icon(CupertinoIcons.cloud_download),
-                    onPressed: () => onOfflineAccess(pathController.text),
+                    child: Text("${converterEmoji ?? '📊'} Rows: $totalRows", style: MacosTheme.of(context).typography.caption1),
                   ),
                 const SizedBox(width: 8),
                 if (currentMode == ViewMode.database) ...[
@@ -95,10 +94,15 @@ ToolBar buildAppToolbar({
                       icon: const Icon(CupertinoIcons.arrow_up_down_square), // Jump icon
                        onPressed: onJumpToRow,
                    ),
-                  MacosIconButton(
-                    icon: const Icon(CupertinoIcons.share),
-                    onPressed: onExportCsv,
-                  ),
+                   MacosIconButton(
+                      icon: const Icon(CupertinoIcons.bolt, size: 16),
+                      onPressed: onPower2,
+                   ),
+                   const SizedBox(width: 8),
+                   MacosIconButton(
+                      icon: const Icon(CupertinoIcons.square_arrow_up, size: 16),
+                      onPressed: onExportCsv,
+                   ),
                 ]
               ],
             ),

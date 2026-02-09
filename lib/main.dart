@@ -13,16 +13,13 @@ import 'db_service.dart';
 import 'flight_service.dart';
 import 'conversion_service.dart';
 import 'cache_service.dart';
-import 'models/recent_file.dart';
-import 'services/recent_files_service.dart';
 import 'models/view_mode.dart';
-import 'services/file_browser_service.dart';
 import 'utils/path_validator.dart';
+import 'utils/formatters.dart';
 
 import 'widgets/app_toolbar.dart';
 import 'widgets/database_grid_view.dart';
 import 'widgets/flight_banquet_view.dart';
-import 'widgets/file_browser_view.dart';
 import 'widgets/home_dashboard.dart';
 
 void main() async {
@@ -80,14 +77,12 @@ class MyApp extends StatelessWidget {
 class DBViewerPage extends StatefulWidget {
   final FlightService? flightService;
   final DatabaseService? dbService;
-  final RecentFilesService? recentFilesService;
   final ConversionService? conversionService;
 
   const DBViewerPage({
     super.key,
     this.flightService,
     this.dbService,
-    this.recentFilesService,
     this.conversionService,
   });
 
@@ -99,7 +94,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
   // Services
   late final DatabaseService _dbService;
   late final FlightService _flightService;
-  late final RecentFilesService _recentFilesService;
   late final ConversionService _conversionService;
 
   // State
@@ -114,12 +108,14 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
   // Data
   final GlobalKey _gridKey = GlobalKey(); // To trigger grid reloads
-  List<TrinaRow> _fileRows = [];
   List<TrinaRow> _flightRows = [];
   List<String> _tables = [];
   String? _selectedTable;
   List<TrinaColumn> _dbColumns = [];
   int? _totalRows; // Total rows in current table
+  String? _converterEmoji;
+  List<RecordModel> _queryStyles = [];
+  int _defaultLimit = 200;
 
   @override
   void initState() {
@@ -136,9 +132,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
       flight3Url: _flightService.baseUrl,
     );
     
-    // RecentFilesService
-    _recentFilesService = widget.recentFilesService ?? RecentFilesService();
-    
     // Perform async initialization
     _initServices();
     
@@ -147,8 +140,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
   }
 
   Future<void> _initServices() async {
-    // Initialize recent files
-    await _recentFilesService.initialize();
+    // Initialize services if needed
   }
   
   Future<void> _autoConnectFlight() async {
@@ -158,7 +150,11 @@ class _DBViewerPageState extends State<DBViewerPage> {
        setState(() {
          _isFlightConnected = true; 
        });
-     } catch (e) {
+     
+     // Load query styles
+     _queryStyles = await _flightService.getQueryStyles();
+     
+   } catch (e) {
        print("Flight auto-connect failed: $e");
      }
   }
@@ -185,35 +181,22 @@ class _DBViewerPageState extends State<DBViewerPage> {
       _selectedTable = null;
       _dbColumns.clear();
       _totalRows = null;
+      _converterEmoji = null;
     });
 
     try {
-      if (_currentMode == ViewMode.flight) {
-         await _loadFlightBanquet(path);
-         return;
+      // First try local if it's a known database extension
+      if (path.endsWith('.db') || path.endsWith('.sqlite')) {
+        final type = await FileSystemEntity.type(path);
+        if (type != FileSystemEntityType.notFound) {
+          await _openDatabaseFile(path);
+          return;
+        }
       }
 
-      // Check file type
-      final type = await FileSystemEntity.type(path);
-      
-      if (type == FileSystemEntityType.notFound) {
-         // Use server validator
-         final smartError = await PathValidator.generateSmartErrorMessage(_flightService, path);
-         throw Exception(smartError);
-      }
-
-      if (type == FileSystemEntityType.directory) {
-        final rows = FileBrowserService.loadFiles(path);
-        setState(() {
-          _currentMode = ViewMode.fileBrowser;
-          _pageIndex = 1; // Sync sidebar
-          _fileRows = rows;
-          _isLoading = false;
-        });
-      } else {
-        // Assume file
-        await _openDatabaseFile(path);
-      }
+      // Otherwise, use Banquet Sync (Flight3 server)
+      // This handles directories, non-sqlite files (conversion), and remote banquet URLs
+      await _handleOfflineAccess(path);
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -236,14 +219,16 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
     try {
       await _dbService.connect(file.path);
-      await _recentFilesService.addRecentFile(path: path);
       
       final tables = await _dbService.getTables();
+      final userVersion = await _dbService.getUserVersion();
+      final emoji = Formatters.getConverterEmoji(userVersion);
       
       setState(() {
         _currentMode = ViewMode.database;
         _tables = tables;
         _isLoading = false;
+        _converterEmoji = emoji;
         if (tables.isNotEmpty) {
            _selectedTable = tables.first;
         }
@@ -276,6 +261,16 @@ class _DBViewerPageState extends State<DBViewerPage> {
       // Get count
       final count = await _dbService.countRows(tableName);
 
+      // Apply query style defaults if any
+      final style = _queryStyles.firstWhere(
+        (s) => s.data['style_name'] == 'sqlite', 
+        orElse: () => RecordModel()
+      );
+      
+      if (style.id.isNotEmpty) {
+        _defaultLimit = style.data['default_limit'] ?? 200;
+      }
+
       setState(() {
         _dbColumns = columns;
         _totalRows = count;
@@ -293,17 +288,80 @@ class _DBViewerPageState extends State<DBViewerPage> {
     if (_selectedTable == null) return [];
     
     try {
-      final rowsData = await _dbService.fetchRows(_selectedTable!, limit: 100, offset: offset);
+      final rowsData = await _dbService.fetchRows(_selectedTable!, limit: 200, offset: offset);
+      
+      // If this is the initial load (offset 0), we can optimize columns
+      if (offset == 0 && rowsData.isNotEmpty) {
+        _optimizeColumns(_selectedTable!, rowsData);
+      }
+
       return rowsData.map((row) {
         final cells = <String, TrinaCell>{};
         row.forEach((key, value) {
-          cells[key] = TrinaCell(value: value?.toString() ?? '');
+          String displayValue = value?.toString() ?? '';
+          
+          final lowerKey = key.toLowerCase();
+          if (lowerKey.contains('permission') || lowerKey == 'mode') {
+            displayValue = Formatters.formatPermissions(value);
+          } else if (lowerKey.contains('date') || lowerKey.contains('created') || lowerKey.contains('updated')) {
+            displayValue = Formatters.formatDate(value);
+          } else if (lowerKey.contains('time') || lowerKey == 'timestamp') {
+            displayValue = Formatters.formatTime(value);
+          }
+          
+          cells[key] = TrinaCell(value: displayValue);
         });
         return TrinaRow(cells: cells);
       }).toList();
     } catch (e) {
       print("Error fetching rows: $e");
       return [];
+    }
+  }
+
+  void _optimizeColumns(String tableName, List<Map<String, Object?>> sampleData) {
+    if (sampleData.isEmpty) return;
+
+    final List<TrinaColumn> optimizedColumns = [];
+    final keys = sampleData.first.keys.toList();
+
+    for (final key in keys) {
+      final lengths = <double>[];
+      bool isAllNull = true;
+
+      for (final row in sampleData) {
+        final value = row[key];
+        if (value != null && value.toString().isNotEmpty) {
+          isAllNull = false;
+          final valStr = value.toString();
+          // Rough estimation of width (8.5px per char + padding)
+          lengths.add(valStr.length * 8.5 + 32.0); 
+        }
+      }
+
+      if (!isAllNull) {
+        lengths.sort();
+        // Use 98% percentile for "tight fit"
+        final index = (lengths.length * 0.98).floor();
+        double maxWidth = index < lengths.length ? lengths[index] : (lengths.isNotEmpty ? lengths.last : 100.0);
+        
+        // Ensure some minimums/maximums
+        if (maxWidth < 100) maxWidth = 100;
+        if (maxWidth > 600) maxWidth = 600;
+        
+        optimizedColumns.add(TrinaColumn(
+          field: key,
+          title: key,
+          width: maxWidth,
+          type: TrinaColumnType.text(),
+        ));
+      }
+    }
+
+    if (optimizedColumns.isNotEmpty) {
+      setState(() {
+        _dbColumns = optimizedColumns;
+      });
     }
   }
   
@@ -321,19 +379,26 @@ class _DBViewerPageState extends State<DBViewerPage> {
      // Load banquet links
      try {
        final links = await _flightService.getBanquetLinks();
-       setState(() {
-          _flightRows = links.map((record) => TrinaRow(
-             cells: {
-               'id': TrinaCell(value: record.id),
-               'explore': TrinaCell(value: 'Link'),
-               'path': TrinaCell(value: record.data['original_url'] ?? ''),
-               'desc': TrinaCell(value: record.data['description'] ?? ''),
-               'original_url': TrinaCell(value: record.data['original_url'] ?? ''),
-             }
-          )).toList();
-          _isLoading = false;
-          _isFlightConnected = true;
-       });
+        setState(() {
+           _flightRows = links.map((record) {
+             final path = record.data['original_url'] ?? '';
+             final desc = record.data['description'] ?? '';
+             final isFolder = desc.toLowerCase().contains('folder') || !path.contains('.');
+             final displayPath = isFolder ? '📁 $path' : '📄 $path';
+             
+             return TrinaRow(
+                cells: {
+                  'id': TrinaCell(value: record.id),
+                  'path': TrinaCell(value: displayPath),
+                  'raw_path': TrinaCell(value: path),
+                  'desc': TrinaCell(value: record.data['description'] ?? ''),
+                  'original_url': TrinaCell(value: record.data['original_url'] ?? ''),
+                }
+             );
+           }).toList();
+           _isLoading = false;
+           _isFlightConnected = true;
+        });
      } catch (e) {
        setState(() {
          _isLoading = false;
@@ -341,7 +406,55 @@ class _DBViewerPageState extends State<DBViewerPage> {
        });
      }
   }
-  
+
+  Future<void> _showPower2Analysis() async {
+    if (_selectedTable == null) return;
+    
+    setState(() { _isLoading = true; });
+    try {
+      final samples = await _dbService.fetchPower2Samples(_selectedTable!);
+      setState(() { _isLoading = false; });
+      
+      if (!mounted) return;
+      
+      final sampleText = samples.isEmpty 
+          ? 'No rows found for sampling.'
+          : samples.asMap().entries.map((e) {
+              final row = e.value;
+              final rowId = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512][e.key];
+              // Pick first 3 keys to show
+              final keys = row.keys.take(3).toList();
+              final values = keys.map((k) => '$k: ${row[k]}').join(', ');
+              return 'Row $rowId: $values';
+            }).join('\n');
+
+      showMacosAlertDialog(
+        context: context,
+        builder: (context) => MacosAlertDialog(
+          appIcon: const Icon(CupertinoIcons.bolt_fill, size: 64, color: MacosColors.systemYellowColor),
+          title: const Text('Power2 Analysis'),
+          message: SingleChildScrollView(
+            child: Text(
+              'Sampling ${_selectedTable!} at powers of 2:\n\n$sampleText',
+              style: MacosTheme.of(context).typography.caption1,
+            ),
+          ),
+          primaryButton: PushButton(
+            controlSize: ControlSize.large,
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ),
+      );
+      // In a real implementation we might show another grid in the dialog
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = "Analysis failed: $e";
+      });
+    }
+  }
+
   Future<void> _loadFlightBanquet(String path) async {
       // Load specific banquet path
       // Reuse connect logic but filtering? 
@@ -386,49 +499,54 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
   @override
   Widget build(BuildContext context) {
-    return MacosWindow(
-      sidebar: Sidebar(
-        minWidth: 200,
-        builder: (context, scrollController) {
-          return SidebarItems(
-            currentIndex: _pageIndex,
-            onChanged: (index) {
-              setState(() {
-                _pageIndex = index;
-                if (index == 0) {
+    return PlatformMenuBar(
+      menus: [
+        PlatformMenu(
+          label: 'Sqliter',
+          menus: [
+            PlatformMenuItemGroup(
+              members: [
+                PlatformMenuItem(
+                  label: 'About Sqliter',
+                  onSelected: () {
+                    showAboutDialog(
+                      context: context,
+                      applicationName: 'Sqliter',
+                      applicationVersion: '1.0.0',
+                    );
+                  },
+                ),
+              ],
+            ),
+            if (Platform.isMacOS)
+              const PlatformProvidedMenuItem(
+                type: PlatformProvidedMenuItemType.quit,
+              ),
+          ],
+        ),
+        PlatformMenu(
+          label: 'View',
+          menus: [
+            PlatformMenuItem(
+              label: 'Go Home',
+              shortcut: const CharacterActivator('h', meta: true),
+              onSelected: () {
+                setState(() {
                   _currentMode = ViewMode.home;
-                  _isLoading = false;
-                  _errorMessage = null;
                   _pathController.clear();
-                } else if (index == 1) {
-                  _currentMode = ViewMode.fileBrowser;
-                  _pathController.text = Platform.environment['HOME'] ?? '/';
-                  _loadPath();
-                } else if (index == 2) {
-                   // Ensure flight view is triggered
-                   _currentMode = ViewMode.flight;
-                   _loadFlightBanquet('');
-                }
-              });
-            },
-            items: const [
-              SidebarItem(
-                label: Text('Home'),
-                leading: MacosIcon(CupertinoIcons.home),
-              ),
-              SidebarItem(
-                label: Text('Browse Local'),
-                leading: MacosIcon(CupertinoIcons.folder),
-              ),
-              SidebarItem(
-                label: Text('Flight Server'),
-                leading: MacosIcon(CupertinoIcons.cloud),
-              ),
-            ],
-          );
-        },
-      ),
-      child: MacosScaffold(
+                });
+              },
+            ),
+            PlatformMenuItem(
+              label: 'Flight Server',
+              shortcut: const CharacterActivator('f', meta: true),
+              onSelected: _connectToFlight,
+            ),
+          ],
+        ),
+      ],
+      child: MacosWindow(
+        child: MacosScaffold(
         toolBar: buildAppToolbar(
         context: context,
         currentMode: _currentMode,
@@ -439,9 +557,10 @@ class _DBViewerPageState extends State<DBViewerPage> {
         tables: _tables,
         selectedTable: _selectedTable,
         totalRows: _totalRows,
+        converterEmoji: _converterEmoji,
+        onPower2: _showPower2Analysis,
         onHomeTap: () {
           setState(() {
-            _pageIndex = 0; // Sync sidebar
             _currentMode = ViewMode.home;
             _isLoading = false;
             _errorMessage = null;
@@ -453,7 +572,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
           _loadPath();
         },
         onConnectFlight: _connectToFlight,
-        onOfflineAccess: _handleOfflineAccess,
         onTableChanged: (val) {
            setState(() {
              _selectedTable = val;
@@ -466,10 +584,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
            // So this callback might be redundant if the button is inside the grid view only.
            // But AppToolbar might have an export button too?
            // The extraction put buttons in Toolbar AND Grid stats header.
-           // If Toolbar button is pressed, we need reference to Grid? 
-           // Simpler: Toolbar export button disabled or removed, logic in Grid.
-           // Only toolbar has 'Share' icon.
-           // If we want Toolbar export to work, we need a GlobalKey<DatabaseGridViewState> maybe?
+           // If Toolbar button is pressed, we need a GlobalKey<DatabaseGridViewState> maybe?
         },
         onJumpToRow: () {
            // Same as export
@@ -489,23 +604,12 @@ class _DBViewerPageState extends State<DBViewerPage> {
              switch (_currentMode) {
                case ViewMode.home:
                  return HomeDashboard(
-                   recentFilesService: _recentFilesService,
                    cacheService: _conversionService.cacheService,
                    isFlightConnected: _isFlightConnected,
-                   onBrowseLocal: () {
-                      setState(() {
-                        _currentMode = ViewMode.fileBrowser;
-                        _pathController.text = Platform.environment['HOME'] ?? '/';
-                      });
-                      _loadPath();
-                   },
                    onConnectFlight: _connectToFlight,
                    onOpenFile: (path) {
                      _pathController.text = path;
                      _loadPath();
-                   },
-                   onRemoveRecentFile: (file) async {
-                     await _recentFilesService.removeRecentFile(file.path);
                    },
                  );
                  
@@ -518,16 +622,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
                    onFetchRows: _fetchDatabaseRows,
                  );
                  
-               case ViewMode.fileBrowser:
-                 return FileBrowserView(
-                   rows: _fileRows,
-                   onRowDoubleTap: (row) {
-                      final path = row.cells['id']?.value.toString() ?? '';
-                      _pathController.text = path;
-                      _loadPath();
-                   },
-                 );
-                 
                case ViewMode.flight:
                  return FlightBanquetView(
                    rows: _flightRows,
@@ -535,7 +629,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
                       final path = row.cells['path']?.value;
                       if (path != null) {
                          _pathController.text = path.toString();
-                         _handleOfflineAccess(path.toString());
+                         _loadPath(); // Use centralized loadPath
                       }
                    },
                  );
@@ -544,8 +638,9 @@ class _DBViewerPageState extends State<DBViewerPage> {
         ),
       ],
     ),
-   );
-  }
+   ),
+  );
+ }
   
   Widget _buildErrorView() {
     return Center(

@@ -44,7 +44,7 @@ The primary interface for exploring data, powered by `TrinaGrid`.
 
 ### 3.3 Protocol: Banquet & Flight3
 SQLiter integrates with the **Banquet** protocol via Flight3:
-*   **Banquet Links**: The app can parse `banquet://` URLs (via Flight3 API) to render remote datasets as if they were local tables.
+*   **Banquet Links**: The app can parse URLs (via Flight3 API) to render remote datasets as if they were local tables.
 *   **Data Fetching**: Uses `FlightService` to fetch paginated JSON data from Flight3 for remote views.
 
 ### 3.4 File Browser & Conversion
@@ -76,9 +76,44 @@ SQLiter integrates with the **Banquet** protocol via Flight3:
 *   **Theming**: Dark mode by default, consistent with developer tools.
 *   **Icons**: Uses `CupertinoIcons` and the signature 🔥 Flame emoji for branding.
 *   **Window Management**: optimized for Desktop sizing (min width/height checks).
+*   **Banquet Bar makes each breadcrumb clickable and navigatable**
+*   **Banquet Bar shows full location of the table displayed in the grid**
+*   **Banquet Bar shows full location of the table displayed in the grid**
+*   **No UI clutter like sidebar of nav.  That belongs in the menu bar**
+*   **Stats about the data set inline with banquet bar.      Total rows, loaded rows, file size, etc**
+*   **Clean out **
 
 ## 6. Future Roadmap (from Proposal)
 *   **Advanced Filtering**: SQL-like filter builder in the UI.
 *   **Export**: Built-in CSV export for current views.
 *   **Saved Queries**: Persisting user-defined SQL queries.
 *   **Cached Datasets View**: Manager for downloaded/converted databases.
+
+
+## 7. Todo
+* Clean out the UI. 
+* Make each banquet bar breadcrumb hilitr on hover. 
+* Change to single click to navigate to that banquet url subset.
+* Remove separate column for folder emoji. Instead prefix folder name with folder emoji.
+* Banquet bar nav is failing on <enter>.  Fix that. 
+* ~ fails to show ~ folder and shows duplicat ~ symbol. fix that. 
+* In desktop mode, when a banquet url is for a folder send the request to flight3 and have it render the corresponding sqlite that is a filesystem conversion 
+* Replace the Flutter logo with the Flame logo. 
+* Keep Permission values displayed human readable.
+* Change dates to yyyy-mm-dd format. Times hh:mm:ss format.
+* 
+Make a table in pocketbase called query style.
+style_name | default_limit | default_offset | default_sort | default_filter | default_columns | default_group_by
+sqlite | 200 | 0 | path | 
+What's the best way to invent a non-null style? 
+Peak at the first 200 records.  Remove any columns that are null.  
+Calculate column width that fits tight to 98% of column values.
+
+Use the sqlite metadata to choose a query style. 
+
+For every existing converter in mksqlite, pick a fruit emoji to be the user_version in the sqlite metadata.
+ 
+Experiment:
+Power2 Sample 
+Pull rowid 2^0, 2^1, ..., 2^9 and see what you can learn from the dataset 
+

@@ -87,6 +87,16 @@ class FlightService {
       return [];
     }
   }
+
+  Future<List<RecordModel>> getQueryStyles() async {
+    try {
+      final result = await pb.collection('query_style').getList(page: 1, perPage: 100);
+      return result.items;
+    } catch (e) {
+      print("[FlightService] Error fetching styles: $e");
+      return [];
+    }
+  }
   
   Future<RecordModel> saveBanquetLink(String path) async {
       return await pb.collection('banquet_links').create(body: {

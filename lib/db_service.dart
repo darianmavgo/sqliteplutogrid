@@ -56,6 +56,27 @@ class DatabaseService {
     final value = result.first.values.first;
     return (value as num?)?.toInt() ?? 0;
   }
+
+  Future<int> getUserVersion() async {
+    if (_db == null) throw Exception("Database not connected");
+    final result = await _db!.rawQuery('PRAGMA user_version;');
+    if (result.isEmpty) return 0;
+    final value = result.first.values.first;
+    return (value as num?)?.toInt() ?? 0;
+  }
+
+  Future<List<Map<String, Object?>>> fetchPower2Samples(String tableName) async {
+    if (_db == null) throw Exception("Database not connected");
+    final indices = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
+    final results = <Map<String, Object?>>[];
+    for (final i in indices) {
+      final res = await _db!.rawQuery('SELECT * FROM "$tableName" LIMIT 1 OFFSET ${i-1}');
+      if (res.isNotEmpty) {
+        results.add(res.first);
+      }
+    }
+    return results;
+  }
   
   Future<void> close() async {
     await _db?.close();

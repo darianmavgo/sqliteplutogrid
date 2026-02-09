@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:trina_grid/trina_grid.dart';
-import '../services/csv_export_service.dart';
 
 class DatabaseGridView extends StatefulWidget {
   final List<TrinaColumn> columns;
@@ -55,49 +54,6 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
     // logic: _stateManager!.scrollToRow(index);
   }
 
-  Future<void> _handleExport() async {
-    if (_stateManager == null || widget.tableName == null) return;
-
-    try {
-      final path = await CsvExportService.exportRows(
-        rows: _stateManager!.refRows,
-        columns: widget.columns,
-        tableName: widget.tableName!,
-      );
-      
-      if (mounted) {
-        showMacosAlertDialog(
-          context: context,
-          builder: (context) => MacosAlertDialog(
-            appIcon: const Icon(CupertinoIcons.checkmark_circle, size: 64, color: MacosColors.systemGreenColor),
-            title: const Text('Export Successful'),
-            message: Text('Exported to: $path'),
-            primaryButton: PushButton(
-              controlSize: ControlSize.large,
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        showMacosAlertDialog(
-          context: context,
-          builder: (context) => MacosAlertDialog(
-            appIcon: const Icon(CupertinoIcons.exclamationmark_triangle, size: 64, color: MacosColors.systemRedColor),
-            title: const Text('Export Failed'),
-            message: Text(e.toString()),
-            primaryButton: PushButton(
-              controlSize: ControlSize.large,
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ),
-        );
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -149,11 +105,6 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
                 ),
               ],
               const Spacer(),
-              // Export to CSV button
-              MacosIconButton(
-                icon: const Icon(CupertinoIcons.arrow_down_doc, size: 16),
-                onPressed: _handleExport,
-              ),
               const SizedBox(width: 8),
               // Jump to Row button
               MacosIconButton(

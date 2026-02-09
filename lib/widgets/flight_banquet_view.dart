@@ -38,7 +38,7 @@ class FlightBanquetView extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                "Common datasets shared on Flight3. Double-click to open.",
+                "Common datasets shared on Flight3. Double-click an item to explore.",
                 style: MacosTheme.of(context).typography.body.copyWith(
                   color: Colors.white.withOpacity(0.7),
                 ),
@@ -50,21 +50,14 @@ class FlightBanquetView extends StatelessWidget {
         Expanded(
           child: TrinaGrid(
             columns: [
-                TrinaColumn(field: 'explore', title: 'Explore', width: 80, frozen: TrinaColumnFrozen.start, type: TrinaColumnType.text()),
-                TrinaColumn(field: 'path', title: 'Banquet Path', width: 400, type: TrinaColumnType.text()),
+                TrinaColumn(field: 'path', title: 'Banquet Path (Click to Explore)', width: 500, frozen: TrinaColumnFrozen.start, type: TrinaColumnType.text()),
                 TrinaColumn(field: 'desc', title: 'Details', width: 300, type: TrinaColumnType.text()),
-                TrinaColumn(field: 'original_url', title: 'Source', width: 300, type: TrinaColumnType.text()),
+                TrinaColumn(field: 'original_url', title: 'Source', width: 400, type: TrinaColumnType.text()),
             ],
             rows: rows,
             onRowDoubleTap: (event) => onRowDoubleTap(event.row),
             configuration: TrinaGridConfiguration(
-              /*
-              style: TrinaStyle(
-                 // dateFormat: 'MM/dd/yyyy', // These might be part of column config now?
-                 // removing date formats if not specific to style
-              ),
-              columnFilter: const TrinaColumnFilter(active: true),
-              */
+               columnFilter: const TrinaColumnFilter(active: true),
             ),
           ),
         ),
