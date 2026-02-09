@@ -14,7 +14,7 @@ ToolBar buildBanquetBar({
 }) {
   return ToolBar(
     automaticallyImplyLeading: false,
-    leading: const SizedBox(),
+    leading: const SizedBox(width: 1),
     alignment: Alignment.centerLeft,
     titleWidth: 5000,
     title: Row(
