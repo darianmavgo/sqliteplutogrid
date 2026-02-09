@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:trina_grid/trina_grid.dart';
+import '../theme/sqliter_theme.dart';
 
 class DatabaseGridView extends StatefulWidget {
   final List<TrinaColumn> columns;
@@ -32,17 +33,16 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
     return Column(
       children: [
         // Grid
+        // Grid
         Expanded(
-          child: Theme(
-            data: ThemeData.dark(),
-            child: Material(
+          child: Material(
             type: MaterialType.transparency, // Keep it transparent as we handle background
             child: TrinaGrid(
               columns: widget.columns,
               // ignore: prefer_const_literals_to_create_immutables
               rows: [],
               onLoaded: (TrinaGridOnLoadedEvent event) {
-                event.stateManager.setShowColumnFilter(true);
+                // event.stateManager.setShowColumnFilter(true);
               },
               onRowDoubleTap: widget.onRowDoubleTap != null ? (event) => widget.onRowDoubleTap!(event.row) : null,
               createFooter: (stateManager) {
@@ -64,22 +64,11 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
                   stateManager: stateManager,
                 );
               },
-              configuration: _getGridConfiguration(context),
+              configuration: SqliterTheme.getGridConfig(context),
             ),
           ),
         ),
-      ),
       ],
-    );
-  }
-
-  TrinaGridConfiguration _getGridConfiguration(BuildContext context) {
-    return const TrinaGridConfiguration(
-      /*
-      style: TrinaStyle(
-        // Default style
-      ),
-      */
     );
   }
 }

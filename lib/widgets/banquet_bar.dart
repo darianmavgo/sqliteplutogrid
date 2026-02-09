@@ -12,22 +12,9 @@ ToolBar buildBanquetBar({
   required VoidCallback onHomeTap,
 }) {
   return ToolBar(
+    titleWidth: 5000,
     title: Row(
       children: [
-        // Flame emoji as home button
-        GestureDetector(
-          onTap: onHomeTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: const Text(
-              '🔥',
-              style: TextStyle(
-                fontSize: 24,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
         Expanded(
           child: BreadcrumbPathField(
             controller: pathController,

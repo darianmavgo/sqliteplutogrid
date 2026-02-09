@@ -14,7 +14,7 @@ import 'db_service.dart';
 import 'flight_service.dart';
 import 'utils/formatters.dart';
 
-import 'widgets/app_toolbar.dart';
+import 'widgets/banquet_bar.dart';
 import 'widgets/database_grid_view.dart';
 
 void main() async {
@@ -27,12 +27,13 @@ void main() async {
     center: true,
     backgroundColor: Colors.transparent,
     skipTaskbar: false,
-    titleBarStyle: TitleBarStyle.hidden,
+    titleBarStyle: TitleBarStyle.normal,
   );
   
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.show();
     await windowManager.focus();
+    await windowManager.maximize();
   });
 
   // Initialize FFI for SQLite
@@ -64,7 +65,19 @@ class MyApp extends StatelessWidget {
       darkTheme: MacosThemeData.dark(),
       theme: MacosThemeData.dark(),
       debugShowCheckedModeBanner: false,
-      home: const DBViewerPage(),
+      home: Builder(
+        builder: (context) {
+          // Use a builder to get the correct context for MediaQuery
+          final data = MediaQuery.of(context);
+          return MediaQuery(
+            // Cap the scaling to prevent layout breakage on very large text settings
+            data: data.copyWith(
+              textScaler: data.textScaler.clamp(minScaleFactor: 1.0, maxScaleFactor: 1.5),
+            ),
+            child: const DBViewerPage(),
+          );
+        },
+      ),
     );
   }
 }
@@ -161,9 +174,9 @@ class _DBViewerPageState extends State<DBViewerPage> {
        setState(() {
           _cachedBanquetRows = rows;
           _gridColumns = [
-              TrinaColumn(field: 'path', title: 'Banquet Path (Double Click)', width: 500, frozen: TrinaColumnFrozen.start, type: TrinaColumnType.text()),
-              TrinaColumn(field: 'desc', title: 'Details', width: 300, type: TrinaColumnType.text()),
-              TrinaColumn(field: 'original_url', title: 'Source', width: 400, type: TrinaColumnType.text()),
+              TrinaColumn(field: 'path', title: 'Banquet Path (Double Click)', width: 500, frozen: TrinaColumnFrozen.start, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false, enableDropToResize: false),
+              TrinaColumn(field: 'desc', title: 'Details', width: 300, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false),
+              TrinaColumn(field: 'original_url', title: 'Source', width: 400, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false),
           ];
           _totalRows = rows.length;
           _isLoading = false;
@@ -190,6 +203,11 @@ class _DBViewerPageState extends State<DBViewerPage> {
   Future<void> _loadPath({String? pathOverride}) async {
     final path = pathOverride ?? _pathController.text.trim();
     if (path.isEmpty) return;
+    
+    // Update controller if override used, to reflect current path in UI
+    if (pathOverride != null) {
+      _pathController.text = path;
+    }
 
     setState(() {
       _isLoading = true;
@@ -275,6 +293,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
         title: colName,
         width: 100, // Default width
         type: TrinaColumnType.text(),
+        enableFilterMenuItem: false,
+        enableContextMenu: false,
       )).toList();
 
       // Get count
@@ -375,6 +395,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
           title: key,
           width: maxWidth,
           type: TrinaColumnType.text(),
+          enableFilterMenuItem: false,
+          enableContextMenu: false,
         ));
       }
     }
@@ -397,10 +419,45 @@ class _DBViewerPageState extends State<DBViewerPage> {
       _pathController.text = serverPath;
       await _openDatabaseFile(serverPath);
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = "Sync failed: $e";
-      });
+      debugPrint("Flight3 sync failed: $e. Falling back to native picker.");
+      
+      try {
+        // Fallback: If server fails, try to open as a local folder using native picker
+        String initialDir = banquetPath;
+        if (initialDir.startsWith('~')) {
+          String? home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+          if (home != null) {
+            initialDir = initialDir.replaceFirst('~', home);
+          }
+        }
+
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: ['db', 'sqlite'],
+          initialDirectory: initialDir,
+          dialogTitle: 'Select a Database in $banquetPath',
+        );
+
+        if (result != null && result.files.single.path != null) {
+          // User picked a file, open it
+          final pickedPath = result.files.single.path!;
+          _pathController.text = pickedPath; // Update URL bar
+          await _openDatabaseFile(pickedPath);
+          return;
+        } else {
+          // User cancelled picker
+          setState(() {
+             _isLoading = false;
+             // We don't show an error if they just cancelled the "folder view"
+          });
+        }
+      } catch (pickerError) {
+         // If picker also fails (e.g. invalid path for initialDirectory), show original error
+          setState(() {
+            _isLoading = false;
+            _errorMessage = "Sync failed: $e\nFallback failed: $pickerError";
+          });
+      }
     }
   }
 
@@ -458,8 +515,40 @@ class _DBViewerPageState extends State<DBViewerPage> {
                 _loadBanquetLinks();
               },
             ),
+            PlatformMenuItem(
+              label: 'Toggle Full Screen',
+              shortcut: const CharacterActivator('f', meta: true, control: true),
+              onSelected: () async {
+                bool isFullScreen = await windowManager.isFullScreen();
+                if (isFullScreen) {
+                  await windowManager.setFullScreen(false);
+                } else {
+                  await windowManager.setFullScreen(true);
+                }
+              },
+            ),
+            PlatformMenuItem(
+              label: 'Maximize Window',
+              shortcut: const CharacterActivator('m', meta: true, control: true),
+              onSelected: () async {
+                  await windowManager.maximize();
+              },
+            ),
           ],
         ),
+        if (_pathController.text.isNotEmpty)
+          PlatformMenu(
+            label: _pathController.text,
+            menus: [
+              PlatformMenuItem(
+                label: 'Copy Path',
+                onSelected: () {
+                  // Not implementing clipboard copy for brevity unless requested
+                  // Or maybe just show it
+                },
+              ),
+            ],
+          ),
       ],
       child: MacosWindow(
         child: MacosScaffold(

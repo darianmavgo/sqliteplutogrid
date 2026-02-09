@@ -66,12 +66,28 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
         _lastParsedPath = path;
       });
     } catch (e) {
-      debugPrint('[BreadcrumbPathField] Error parsing path: $e');
-      // Fallback to simple split
+      // Fallback to simple split for local paths
+      final parts = path.split('/').where((s) => s.isNotEmpty).toList();
+      final segments = <_PathSegment>[];
+      
+      String buffer = path.startsWith('/') ? '/' : '';
+      
+      for (int i = 0; i < parts.length; i++) {
+        if (i > 0 || (buffer != '/' && buffer.isNotEmpty)) {
+          buffer += '/';
+        }
+        buffer += parts[i];
+        
+        segments.add(_PathSegment(
+          text: parts[i],
+          path: buffer,
+          exists: true, // Assume valid for local paths
+          type: 'unknown',
+        ));
+      }
+
       setState(() {
-        _cachedSegments = path.split('/').where((s) => s.isNotEmpty).map((text) =>
-          _PathSegment(text: text, path: '', exists: false, type: 'unknown')
-        ).toList();
+        _cachedSegments = segments;
         _lastParsedPath = path;
       });
     }
@@ -131,7 +147,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
                       padding: const EdgeInsets.only(right: 2),
                       child: Text(
                         widget.controller.text.startsWith('~') ? '' : '/',
-                        style: TextStyle(
+                        style: MacosTheme.of(context).typography.body.copyWith(
                           fontSize: 13,
                           color: _cachedSegments.isNotEmpty && _cachedSegments.first.exists
                               ? MacosColors.systemGreenColor.withValues(alpha: 0.8)
@@ -158,9 +174,9 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
                           padding: const EdgeInsets.symmetric(horizontal: 2),
                           child: Text(
                             '/',
-                            style: TextStyle(
+                            style: MacosTheme.of(context).typography.body.copyWith(
                               fontSize: 13,
-                              color: Colors.white.withValues(alpha: 0.3),
+                              color: MacosColors.white.withValues(alpha: 0.3),
                             ),
                           ),
                         ),
@@ -241,15 +257,15 @@ class _BreadcrumbSegmentState extends State<_BreadcrumbSegment> {
           ),
           child: Text(
             widget.segment.text,
-            style: TextStyle(
-              fontSize: 13,
+            style: MacosTheme.of(context).typography.body.copyWith(
+              fontSize: 13, // Keep specific size for breadcrumb density
               color: exists 
-                  ? (widget.isLast ? Colors.white : Colors.white.withValues(alpha: 0.7))
+                  ? (widget.isLast ? MacosColors.white : MacosColors.white.withValues(alpha: 0.7))
                   : MacosColors.systemRedColor,
               fontWeight: widget.isLast ? FontWeight.w500 : FontWeight.normal,
               decoration: exists ? null : TextDecoration.lineThrough,
               decorationColor: MacosColors.systemRedColor,
-              backgroundColor: _isHovered ? Colors.white.withValues(alpha: 0.05) : null,
+              backgroundColor: _isHovered ? MacosColors.white.withValues(alpha: 0.05) : null,
             ),
           ),
         ),
