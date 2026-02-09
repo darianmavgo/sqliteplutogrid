@@ -19,10 +19,6 @@ ToolBar buildBanquetBar({
     titleWidth: 5000,
     title: Row(
       children: [
-        // Traffic Lights padding + Draggable area
-        const DragToMoveArea(
-          child: SizedBox(width: 52 + 12.0, height: 40), 
-        ),
         Expanded(
           child: BreadcrumbPathField(
             controller: pathController,
