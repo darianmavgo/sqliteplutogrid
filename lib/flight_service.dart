@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:pocketbase/pocketbase.dart';
 
@@ -7,11 +8,10 @@ class FlightService {
   String baseUrl;
   late PocketBase pb;
   late final http.Client _httpClient;
-  bool _isAdmin = false;
 
   FlightService({String? baseUrl}) 
       : baseUrl = baseUrl ?? const String.fromEnvironment('FLIGHT_URL', defaultValue: 'http://127.0.0.1:8090') {
-    print("[FlightService] Initialized with Base URL: $baseUrl");
+    debugPrint("[FlightService] Initialized with Base URL: $baseUrl");
     initPb();
     _httpClient = http.Client();
   }
@@ -30,12 +30,10 @@ class FlightService {
   Future<void> authenticate(String email, String password) async {
     try {
       // Try as admin first
-      await pb.admins.authWithPassword(email, password);
-      _isAdmin = true;
+      await pb.collection('_superusers').authWithPassword(email, password);
     } catch (e) {
       // Fallback to regular user
       await pb.collection('users').authWithPassword(email, password);
-      _isAdmin = false;
     }
   }
 
@@ -51,13 +49,13 @@ class FlightService {
     }
     
     final uri = Uri.parse('$baseUrl/sqliter/rows').replace(queryParameters: queryParams);
-    print('[FlightService] Fetching: $uri');
+    debugPrint('[FlightService] Fetching: $uri');
 
     try {
       final response = await _httpClient.get(uri);
       
-      print('[FlightService] Response status: ${response.statusCode}');
-      print('[FlightService] Response body (first 200 chars): ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}');
+      debugPrint('[FlightService] Response status: ${response.statusCode}');
+      debugPrint('[FlightService] Response body (first 200 chars): ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}');
       
       if (response.statusCode == 200) {
         try {
@@ -69,7 +67,7 @@ class FlightService {
         throw Exception('HTTP ${response.statusCode} from $uri: ${response.body}');
       }
     } catch (e) {
-      print('[FlightService] ERROR: $e');
+      debugPrint('[FlightService] ERROR: $e');
       rethrow;
     }
   }
@@ -80,9 +78,9 @@ class FlightService {
       final result = await pb.collection('banquet_links').getList(page: 1, perPage: 100);
       return result.items;
     } catch (e) {
-      print("[FlightService] Error fetching links: $e");
+      debugPrint("[FlightService] Error fetching links: $e");
       if (e is ClientException) {
-         print("Response: ${e.response}");
+         debugPrint("Response: ${e.response}");
       }
       return [];
     }
@@ -93,7 +91,7 @@ class FlightService {
       final result = await pb.collection('query_style').getList(page: 1, perPage: 100);
       return result.items;
     } catch (e) {
-      print("[FlightService] Error fetching styles: $e");
+      debugPrint("[FlightService] Error fetching styles: $e");
       return [];
     }
   }
@@ -174,5 +172,5 @@ class FlightService {
     }
   }
 
-  String? get userId => pb.authStore.model?.id;
+  String? get userId => pb.authStore.record?.id;
 }

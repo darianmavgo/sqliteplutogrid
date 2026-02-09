@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:trina_grid/trina_grid.dart';
 import 'package:macos_ui/macos_ui.dart';
 
@@ -27,7 +26,7 @@ class FlightBanquetView extends StatelessWidget {
           width: double.infinity,
           decoration: BoxDecoration(
             color: const Color(0xFF2D2D2D),
-            border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.1))),
+            border: Border(bottom: BorderSide(color: Colors.white.withValues(alpha: 0.1))),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -40,7 +39,7 @@ class FlightBanquetView extends StatelessWidget {
               Text(
                 "Common datasets shared on Flight3. Double-click an item to explore.",
                 style: MacosTheme.of(context).typography.body.copyWith(
-                  color: Colors.white.withOpacity(0.7),
+                  color: Colors.white.withValues(alpha: 0.7),
                 ),
               ),
             ],
@@ -48,16 +47,20 @@ class FlightBanquetView extends StatelessWidget {
         ),
         // Grid
         Expanded(
-          child: TrinaGrid(
-            columns: [
-                TrinaColumn(field: 'path', title: 'Banquet Path (Click to Explore)', width: 500, frozen: TrinaColumnFrozen.start, type: TrinaColumnType.text()),
-                TrinaColumn(field: 'desc', title: 'Details', width: 300, type: TrinaColumnType.text()),
-                TrinaColumn(field: 'original_url', title: 'Source', width: 400, type: TrinaColumnType.text()),
-            ],
-            rows: rows,
-            onRowDoubleTap: (event) => onRowDoubleTap(event.row),
-            configuration: TrinaGridConfiguration(
-               columnFilter: const TrinaColumnFilter(active: true),
+          child: Material(
+            type: MaterialType.transparency,
+            child: TrinaGrid(
+              columns: [
+                  TrinaColumn(field: 'path', title: 'Banquet Path (Click to Explore)', width: 500, frozen: TrinaColumnFrozen.start, type: TrinaColumnType.text()),
+                  TrinaColumn(field: 'desc', title: 'Details', width: 300, type: TrinaColumnType.text()),
+                  TrinaColumn(field: 'original_url', title: 'Source', width: 400, type: TrinaColumnType.text()),
+              ],
+              rows: rows,
+              onRowDoubleTap: (event) => onRowDoubleTap(event.row),
+              onLoaded: (TrinaGridOnLoadedEvent event) {
+                event.stateManager.setShowColumnFilter(true);
+              },
+              configuration: const TrinaGridConfiguration(),
             ),
           ),
         ),

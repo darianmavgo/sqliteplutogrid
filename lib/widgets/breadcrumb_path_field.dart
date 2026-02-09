@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
-import 'dart:io';
 import '../flight_service.dart';
 
 /// Interactive breadcrumb-style path field where each segment is double-clickable
@@ -68,7 +66,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
         _lastParsedPath = path;
       });
     } catch (e) {
-      print('[BreadcrumbPathField] Error parsing path: $e');
+      debugPrint('[BreadcrumbPathField] Error parsing path: $e');
       // Fallback to simple split
       setState(() {
         _cachedSegments = path.split('/').where((s) => s.isNotEmpty).map((text) =>
@@ -119,7 +117,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
         decoration: BoxDecoration(
           color: const Color(0xFF3D3D3D),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.white.withOpacity(0.1)),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
         ),
         child: Row(
           children: [
@@ -136,8 +134,8 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
                         style: TextStyle(
                           fontSize: 13,
                           color: _cachedSegments.isNotEmpty && _cachedSegments.first.exists
-                              ? MacosColors.systemGreenColor.withOpacity(0.8)
-                              : MacosColors.systemRedColor.withOpacity(0.8),
+                              ? MacosColors.systemGreenColor.withValues(alpha: 0.8)
+                              : MacosColors.systemRedColor.withValues(alpha: 0.8),
                         ),
                       ),
                     ),
@@ -162,7 +160,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
                             '/',
                             style: TextStyle(
                               fontSize: 13,
-                              color: Colors.white.withOpacity(0.3),
+                              color: Colors.white.withValues(alpha: 0.3),
                             ),
                           ),
                         ),
@@ -238,7 +236,7 @@ class _BreadcrumbSegmentState extends State<_BreadcrumbSegment> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           decoration: BoxDecoration(
-            color: _isHovered ? Colors.white.withOpacity(0.1) : Colors.transparent,
+            color: _isHovered ? Colors.white.withValues(alpha: 0.1) : Colors.transparent,
             borderRadius: BorderRadius.circular(3),
           ),
           child: Text(
@@ -246,12 +244,12 @@ class _BreadcrumbSegmentState extends State<_BreadcrumbSegment> {
             style: TextStyle(
               fontSize: 13,
               color: exists 
-                  ? (widget.isLast ? Colors.white : Colors.white.withOpacity(0.7))
+                  ? (widget.isLast ? Colors.white : Colors.white.withValues(alpha: 0.7))
                   : MacosColors.systemRedColor,
               fontWeight: widget.isLast ? FontWeight.w500 : FontWeight.normal,
               decoration: exists ? null : TextDecoration.lineThrough,
               decorationColor: MacosColors.systemRedColor,
-              backgroundColor: _isHovered ? Colors.white.withOpacity(0.05) : null,
+              backgroundColor: _isHovered ? Colors.white.withValues(alpha: 0.05) : null,
             ),
           ),
         ),

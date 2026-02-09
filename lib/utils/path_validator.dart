@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import '../flight_service.dart';
 
 /// Helper class for validating paths via Flight3 API
@@ -14,9 +15,10 @@ class PathValidator {
         queryParams: {'path': fullPath},
       );
     } catch (e) {
-      print('[PathValidator] Error validating path: $e');
+      debugPrint('[PathValidator] Error validating path: $e');
       return {
         'valid': false,
+        'expanded_path': '',
         'error_message': 'Failed to validate path: ${e.toString()}',
       };
     }

@@ -33,17 +33,12 @@ ToolBar buildAppToolbar({
           onTap: onHomeTap,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: Text(
+            child: const Text(
               '🔥',
               style: TextStyle(
                 fontSize: 24,
                 // Add subtle glow when on home
-                shadows: currentMode == ViewMode.home ? [
-                  Shadow(
-                    color: MacosColors.systemOrangeColor.withOpacity(0.5),
-                    blurRadius: 8,
-                  ),
-                ] : null,
+                shadows: null,
               ),
             ),
           ),
@@ -53,7 +48,7 @@ ToolBar buildAppToolbar({
         MacosIconButton(
           icon: Icon(
             CupertinoIcons.cloud,
-            color: isFlightConnected ? MacosColors.systemGreenColor : Colors.white.withOpacity(0.5),
+            color: isFlightConnected ? MacosColors.systemGreenColor : Colors.white.withValues(alpha: 0.5),
             size: 20,
           ),
           onPressed: onConnectFlight,

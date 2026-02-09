@@ -69,7 +69,7 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
           decoration: BoxDecoration(
             color: const Color(0xFF2D2D2D),
             border: Border(
-              bottom: BorderSide(color: Colors.white.withOpacity(0.1)),
+              bottom: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
             ),
           ),
           child: Row(
@@ -84,24 +84,24 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
                 const SizedBox(width: 16),
                 Text(
                   '•',
-                  style: TextStyle(color: Colors.white.withOpacity(0.3)),
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
                 ),
                 const SizedBox(width: 16),
                 Text(
                   '${widget.totalRows!.toString()} rows',
-                  style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.7)),
+                  style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.7)),
                 ),
               ],
               if (_stateManager != null && _stateManager!.refRows.isNotEmpty) ...[
                 const SizedBox(width: 16),
                 Text(
                   '•',
-                  style: TextStyle(color: Colors.white.withOpacity(0.3)),
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
                 ),
                 const SizedBox(width: 16),
                 Text(
                   'Showing ${_stateManager!.refRows.length} loaded',
-                  style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.7)),
+                  style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.7)),
                 ),
               ],
               const Spacer(),
@@ -116,36 +116,39 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
         ),
         // Grid
         Expanded(
-          child: TrinaGrid(
-            key: widget.key, // Use key passed from parent if any
-            columns: widget.columns,
-            rows: const [], // Rows loaded via fetch
-            onLoaded: (TrinaGridOnLoadedEvent event) {
-              setState(() {
-                _stateManager = event.stateManager;
-              });
-              event.stateManager.setShowColumnFilter(true);
-            },
-            createFooter: (stateManager) {
-              return TrinaInfinityScrollRows(
-                fetch: (request) async {
-                   final offset = stateManager.refRows.length;
-                   final newRows = await widget.onFetchRows(offset);
-                   
-                   // Update UI to show new loaded count
-                   if (mounted && newRows.isNotEmpty) {
-                     setState(() {}); // Refresh to update stats header
-                   }
-                   
-                   return TrinaInfinityScrollRowsResponse(
-                     isLast: newRows.isEmpty,
-                     rows: newRows,
-                   );
-                },
-                stateManager: stateManager,
-              );
-            },
-            configuration: _getGridConfiguration(context),
+          child: Material(
+            type: MaterialType.transparency, // Keep it transparent as we handle background
+            child: TrinaGrid(
+              columns: widget.columns,
+              // ignore: prefer_const_literals_to_create_immutables
+              rows: [],
+              onLoaded: (TrinaGridOnLoadedEvent event) {
+                setState(() {
+                  _stateManager = event.stateManager;
+                });
+                event.stateManager.setShowColumnFilter(true);
+              },
+              createFooter: (stateManager) {
+                return TrinaInfinityScrollRows(
+                  fetch: (request) async {
+                     final offset = stateManager.refRows.length;
+                     final newRows = await widget.onFetchRows(offset);
+                     
+                     // Update UI to show new loaded count
+                     if (mounted && newRows.isNotEmpty) {
+                       setState(() {}); // Refresh to update stats header
+                     }
+                     
+                     return TrinaInfinityScrollRowsResponse(
+                       isLast: newRows.isEmpty,
+                       rows: newRows,
+                     );
+                  },
+                  stateManager: stateManager,
+                );
+              },
+              configuration: _getGridConfiguration(context),
+            ),
           ),
         ),
       ],
@@ -153,13 +156,10 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
   }
 
   TrinaGridConfiguration _getGridConfiguration(BuildContext context) {
-    return TrinaGridConfiguration(
+    return const TrinaGridConfiguration(
       /*
       style: TrinaStyle(
         // Default style
-      ),
-      columnFilter: const TrinaColumnFilter(
-        active: true,
       ),
       */
     );

@@ -1,26 +1,23 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:trina_grid/trina_grid.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:path/path.dart' as p;
 // ignore: depend_on_referenced_packages
 import 'package:pocketbase/pocketbase.dart'; 
 import 'package:macos_ui/macos_ui.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:file_picker/file_picker.dart';
 
 import 'db_service.dart';
 import 'flight_service.dart';
-import 'conversion_service.dart';
-import 'cache_service.dart';
 import 'models/view_mode.dart';
-import 'utils/path_validator.dart';
 import 'utils/formatters.dart';
 
 import 'widgets/app_toolbar.dart';
 import 'widgets/database_grid_view.dart';
 import 'widgets/flight_banquet_view.dart';
-import 'widgets/home_dashboard.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -64,7 +61,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MacosApp(
-      title: 'SQLiter',
+      title: '🍊',
       themeMode: ThemeMode.dark,
       darkTheme: MacosThemeData.dark(),
       theme: MacosThemeData.dark(),
@@ -77,13 +74,11 @@ class MyApp extends StatelessWidget {
 class DBViewerPage extends StatefulWidget {
   final FlightService? flightService;
   final DatabaseService? dbService;
-  final ConversionService? conversionService;
 
   const DBViewerPage({
     super.key,
     this.flightService,
     this.dbService,
-    this.conversionService,
   });
 
   @override
@@ -94,11 +89,9 @@ class _DBViewerPageState extends State<DBViewerPage> {
   // Services
   late final DatabaseService _dbService;
   late final FlightService _flightService;
-  late final ConversionService _conversionService;
 
   // State
-  ViewMode _currentMode = ViewMode.home;
-  int _pageIndex = 0;
+  ViewMode _currentMode = ViewMode.flight;
   bool _isLoading = false;
   String? _errorMessage;
   bool _isFlightConnected = false;
@@ -115,7 +108,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
   int? _totalRows; // Total rows in current table
   String? _converterEmoji;
   List<RecordModel> _queryStyles = [];
-  int _defaultLimit = 200;
 
   @override
   void initState() {
@@ -125,12 +117,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
     _flightService = widget.flightService ?? FlightService();
     _dbService = widget.dbService ?? DatabaseService();
     
-    // Initialize ConversionService with dependencies
-    final cacheService = CacheService();
-    _conversionService = widget.conversionService ?? ConversionService(
-      cacheService: cacheService,
-      flight3Url: _flightService.baseUrl,
-    );
+    
     
     // Perform async initialization
     _initServices();
@@ -155,7 +142,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
      _queryStyles = await _flightService.getQueryStyles();
      
    } catch (e) {
-       print("Flight auto-connect failed: $e");
+       debugPrint("Flight auto-connect failed: $e");
      }
   }
 
@@ -205,20 +192,30 @@ class _DBViewerPageState extends State<DBViewerPage> {
     }
   }
 
-  Future<void> _openDatabaseFile(String path) async {
-    // If it's a non-standard file, convert it
-    File file = File(path);
-    if (!path.endsWith('.db') && !path.endsWith('.sqlite')) {
-       // Trigger conversion
-       try {
-         file = await _conversionService.ensureSqlite(file);
-       } catch (e) {
-         throw Exception("Failed to convert file: $e");
-       }
-    }
-
+  Future<void> _pickAndOpenFile() async {
     try {
-      await _dbService.connect(file.path);
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['db', 'sqlite'],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        await _loadPath(pathOverride: result.files.single.path!);
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = "Failed to pick file: $e";
+      });
+    }
+  }
+
+  Future<void> _openDatabaseFile(String path) async {
+    // Only open .db and .sqlite files
+    if (!path.endsWith('.db') && !path.endsWith('.sqlite')) {
+       throw Exception("Only .db and .sqlite files are supported for local opening. Use Flight for other formats.");
+    }
+    try {
+      await _dbService.connect(path);
       
       final tables = await _dbService.getTables();
       final userVersion = await _dbService.getUserVersion();
@@ -268,7 +265,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
       );
       
       if (style.id.isNotEmpty) {
-        _defaultLimit = style.data['default_limit'] ?? 200;
+        // Apply limit from style if needed, or stick to 200
+        // For now just ensuring it doesn't crash
       }
 
       setState(() {
@@ -314,7 +312,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
         return TrinaRow(cells: cells);
       }).toList();
     } catch (e) {
-      print("Error fetching rows: $e");
+      debugPrint('[FlightService] ERROR: $e');
       return [];
     }
   }
@@ -446,7 +444,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
           ),
         ),
       );
-      // In a real implementation we might show another grid in the dialog
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -455,24 +452,11 @@ class _DBViewerPageState extends State<DBViewerPage> {
     }
   }
 
-  Future<void> _loadFlightBanquet(String path) async {
-      // Load specific banquet path
-      // Reuse connect logic but filtering? 
-      // Current implementation just connects and shows list. 
-      // If path is provided, we might want to sync.
-      if (path.isNotEmpty) {
-         _handleOfflineAccess(path);
-      } else {
-         _connectToFlight();
-      }
-  }
-  
   Future<void> _handleOfflineAccess(String banquetPath) async {
     setState(() { _isLoading = true; });
     try {
       final metadata = await _flightService.syncBanquet(banquetPath);
       final serverPath = metadata['server_path'];
-      final downloadUrl = metadata['download_url'];
       
       if (serverPath == null) throw Exception("Server returned no path");
       
@@ -502,7 +486,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
     return PlatformMenuBar(
       menus: [
         PlatformMenu(
-          label: 'Sqliter',
+          label: '🍊',
           menus: [
             PlatformMenuItemGroup(
               members: [
@@ -511,17 +495,27 @@ class _DBViewerPageState extends State<DBViewerPage> {
                   onSelected: () {
                     showAboutDialog(
                       context: context,
-                      applicationName: 'Sqliter',
+                      applicationName: '🫐',
                       applicationVersion: '1.0.0',
                     );
                   },
                 ),
               ],
             ),
-            if (Platform.isMacOS)
+            if (defaultTargetPlatform == TargetPlatform.macOS)
               const PlatformProvidedMenuItem(
                 type: PlatformProvidedMenuItemType.quit,
               ),
+          ],
+        ),
+        PlatformMenu(
+          label: 'File',
+          menus: [
+            PlatformMenuItem(
+              label: 'Open...',
+              shortcut: const CharacterActivator('o', meta: true),
+              onSelected: _pickAndOpenFile,
+            ),
           ],
         ),
         PlatformMenu(
@@ -532,7 +526,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
               shortcut: const CharacterActivator('h', meta: true),
               onSelected: () {
                 setState(() {
-                  _currentMode = ViewMode.home;
+                  _currentMode = ViewMode.flight;
                   _pathController.clear();
                 });
               },
@@ -561,7 +555,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
         onPower2: _showPower2Analysis,
         onHomeTap: () {
           setState(() {
-            _currentMode = ViewMode.home;
+            _currentMode = ViewMode.flight;
             _isLoading = false;
             _errorMessage = null;
             _pathController.clear();
@@ -602,17 +596,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
              }
              
              switch (_currentMode) {
-               case ViewMode.home:
-                 return HomeDashboard(
-                   cacheService: _conversionService.cacheService,
-                   isFlightConnected: _isFlightConnected,
-                   onConnectFlight: _connectToFlight,
-                   onOpenFile: (path) {
-                     _pathController.text = path;
-                     _loadPath();
-                   },
-                 );
-                 
                case ViewMode.database:
                  return DatabaseGridView(
                    key: _gridKey,
@@ -659,7 +642,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
           PushButton(
              controlSize: ControlSize.large,
              onPressed: () {
-               setState(() { _errorMessage = null; _currentMode = ViewMode.home; });
+               setState(() { _errorMessage = null; _currentMode = ViewMode.flight; });
              }, 
              child: const Text('Go Home')
           ),

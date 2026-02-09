@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -6,11 +5,6 @@ import 'package:pocketbase/pocketbase.dart';
 import 'package:sqliter/main.dart';
 import 'package:sqliter/flight_service.dart';
 import 'package:sqliter/db_service.dart';
-import 'package:sqliter/services/recent_files_service.dart';
-import 'package:sqliter/conversion_service.dart';
-import 'package:sqliter/widgets/app_toolbar.dart';
-import 'package:sqliter/models/view_mode.dart';
-import 'package:sqliter/models/recent_file.dart';
 
 // --- Manual Mocks ---
 class MockFlightService extends FlightService {
@@ -38,13 +32,18 @@ class MockFlightService extends FlightService {
   }
 
   @override
-  void initPb() {}
+  void initPb() {
+    pb = PocketBase(baseUrl);
+  }
   
   @override
   void updateUrl(String url) {}
   
   @override
   Future<void> authenticate(String email, String password) async {}
+
+  @override
+  Future<List<RecordModel>> getQueryStyles() async => [];
 }
 
 class MockDatabaseService implements DatabaseService {
@@ -70,22 +69,15 @@ class MockDatabaseService implements DatabaseService {
   Stream<List<Map<String, Object?>>> streamRows(String tableName, {int chunkSize = 100}) async* {
     yield [];
   }
+
+  @override
+  Future<int> getUserVersion() async => 0;
+
+  @override
+  Future<List<Map<String, Object?>>> fetchPower2Samples(String tableName) async => [];
 }
 
-class MockRecentFilesService extends RecentFilesService {
-  @override
-  Future<void> initialize() async {}
-  
-  @override
-  List<RecentFile> get recentFiles => [];
-  
-  @override
-  Future<void> addRecentFile({required String path, bool wasConverted = false, String? originalFormat}) async {}
-}
 
-class MockConversionService extends ConversionService {
-  MockConversionService() : super(flight3Url: 'http://mock');
-}
 
 void main() {
   setUpAll(() {
@@ -98,8 +90,6 @@ void main() {
         home: DBViewerPage(
           flightService: MockFlightService(),
           dbService: MockDatabaseService(),
-          recentFilesService: MockRecentFilesService(),
-          conversionService: MockConversionService(),
         ),
       ));
       
@@ -116,14 +106,12 @@ void main() {
         home: DBViewerPage(
             flightService: MockFlightService(),
             dbService: MockDatabaseService(),
-            recentFilesService: MockRecentFilesService(),
-            conversionService: MockConversionService(),
         ),
       ));
       
       await tester.pumpAndSettle();
       
-      expect(find.byIcon(CupertinoIcons.cloud_upload), findsOneWidget);
+      expect(find.byIcon(CupertinoIcons.cloud), findsOneWidget);
     });
 
     testWidgets('Switch to Flight Mode shows links', (WidgetTester tester) async {
@@ -135,15 +123,13 @@ void main() {
         home: DBViewerPage(
             flightService: MockFlightService(),
             dbService: MockDatabaseService(),
-            recentFilesService: MockRecentFilesService(),
-            conversionService: MockConversionService(),
         ),
       ));
       
       await tester.pumpAndSettle();
       
-      // Find cloud upload icon
-      final cloudIcon = find.byIcon(CupertinoIcons.cloud_upload);
+      // Find cloud icon
+      final cloudIcon = find.byIcon(CupertinoIcons.cloud);
       expect(cloudIcon, findsOneWidget);
       
       await tester.tap(cloudIcon);

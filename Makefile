@@ -1,26 +1,19 @@
-APP_NAME := Sqliter
-BUILD_DIR := build/macos/Build/Products/Release
-INSTALL_DIR := /Applications
-
-.PHONY: all build install clean run deps
-
-all: install
-
-deps:
-	flutter pub get
-
-build: deps
-	@echo "Building $(APP_NAME) for macOS..."
-	flutter build macos --release
-
-install: build
-	@echo "Installing $(APP_NAME) to $(INSTALL_DIR)..."
-	rm -rf "$(INSTALL_DIR)/$(APP_NAME).app"
-	cp -r "$(BUILD_DIR)/$(APP_NAME).app" "$(INSTALL_DIR)/"
-	@echo "Installation complete!"
+.PHONY: run run-macos build-macos analyze test verify-all
 
 run:
+	flutter run
+
+run-macos:
 	flutter run -d macos
 
-clean:
-	flutter clean
+build-macos:
+	flutter build macos --debug
+
+analyze:
+	flutter analyze
+
+test:
+	flutter test
+
+verify-all: analyze test build-macos
+	@echo "All checks passed!"
