@@ -125,6 +125,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
           });
           widget.onNavigate(value);
         },
+        padding: EdgeInsets.zero,
         suffix: widget.suffix,
       );
     }
@@ -146,7 +147,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
       },
       child: Container(
         height: 30,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        padding: EdgeInsets.zero,
         decoration: BoxDecoration(
           color: const Color(0xFF3D3D3D),
           borderRadius: BorderRadius.circular(6),
@@ -156,7 +157,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
           children: [
             // Leading indicator
             Padding(
-              padding: const EdgeInsets.only(right: 4),
+              padding: EdgeInsets.zero,
               child: Text(
                 widget.controller.text.startsWith('~') ? '' : '/',
                 style: MacosTheme.of(context).typography.body.copyWith(
@@ -171,9 +172,10 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
               child: ListView.separated(
                 controller: _scrollController,
                 scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.zero,
                 itemCount: _cachedSegments.length,
                 separatorBuilder: (context, index) => Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  padding: EdgeInsets.zero,
                   child: Center(
                     child: Text(
                       '/',
@@ -202,7 +204,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
             
             if (widget.suffix != null)
               Padding(
-                padding: const EdgeInsets.only(left: 4),
+                padding: EdgeInsets.zero,
                 child: widget.suffix!,
               ),
           ],
@@ -264,7 +266,7 @@ class _BreadcrumbSegmentState extends State<_BreadcrumbSegment> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          padding: EdgeInsets.zero,
           decoration: BoxDecoration(
             color: _isHovered ? Colors.white.withValues(alpha: 0.1) : Colors.transparent,
             borderRadius: BorderRadius.circular(3),

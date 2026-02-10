@@ -486,7 +486,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
           isAllNull = false;
           final valStr = value.toString();
           // Rough estimation of width (8.5px per char + padding)
-          lengths.add(valStr.length * 8.5 + 32.0); 
+          lengths.add(valStr.length * 8.5 + 0.0); 
         }
       }
 
@@ -745,14 +745,14 @@ class _DBViewerPageState extends State<DBViewerPage> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const Icon(CupertinoIcons.exclamationmark_triangle, size: 64, color: MacosColors.systemRedColor),
-          const SizedBox(height: 24),
+          const SizedBox(height: 0),
           Text(
             'Error',
              style: MacosTheme.of(context).typography.title1.copyWith(color: MacosColors.systemRedColor),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 0),
           Text(_errorMessage ?? 'Unknown error'),
-          const SizedBox(height: 16),
+          const SizedBox(height: 0),
           PushButton(
              controlSize: ControlSize.large,
              onPressed: () {

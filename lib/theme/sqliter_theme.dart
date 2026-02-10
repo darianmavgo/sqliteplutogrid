@@ -48,6 +48,12 @@ class SqliterTheme {
         
         // Icon colors
         iconColor: theme.iconTheme.color ?? (isDark ? Colors.white70 : Colors.black54),
+        
+        // Match macOS Menu Bar dimensions (24px height, 10px padding)
+        rowHeight: 24.0,
+        columnHeight: 24.0,
+        defaultCellPadding: const EdgeInsets.symmetric(horizontal: 10.0),
+        defaultColumnTitlePadding: const EdgeInsets.symmetric(horizontal: 10.0),
       ),
 
     );

@@ -14,7 +14,9 @@ ToolBar buildBanquetBar({
 }) {
   return ToolBar(
     automaticallyImplyLeading: false,
+    padding: EdgeInsets.zero,
     leading: MacosIconButton(
+      padding: EdgeInsets.zero,
       icon: const Text('🍊', style: TextStyle(fontSize: 20)),
       onPressed: onHomeTap,
     ),
@@ -32,7 +34,7 @@ ToolBar buildBanquetBar({
         ),
         // Add trailing drag area just in case (optional, but good for UX if path is short)
         const DragToMoveArea(
-             child: SizedBox(width: 16, height: 40),
+             child: SizedBox(width: 0, height: 40),
         ),
       ],
     ),
