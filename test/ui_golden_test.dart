@@ -24,6 +24,9 @@ class MockFlightService extends FlightService {
 
   @override
   Future<List<RecordModel>> getQueryStyles() async => [];
+
+  @override
+  Future<String> getHomeDatabasePath() async => '/tmp/home.sqlite';
 }
 
 class MockDatabaseService extends DatabaseService {
@@ -32,6 +35,10 @@ class MockDatabaseService extends DatabaseService {
   Future<void> connect(String path) async {}
   @override
   Future<List<String>> getTables() async => ['Table1', 'Table2'];
+
+  @override
+  Future<List<String>> getTableHeaders(String tableName) async => ['id', 'name', 'value'];
+
   @override
   Future<int> countRows(String t) async => 10;
   @override
@@ -71,6 +78,14 @@ void main() {
           'saturationComponent': 1.0,
           'brightnessComponent': 1.0,
         };
+      },
+    );
+
+    // Mock Window Manager
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('window_manager'),
+      (MethodCall methodCall) async {
+        return null;
       },
     );
   });
