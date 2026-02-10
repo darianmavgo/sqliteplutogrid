@@ -1,10 +1,4 @@
-import 'dart:io';
-import 'dart:convert';
-import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'package:pocketbase/pocketbase.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class FlightService {
   String baseUrl;
@@ -128,18 +122,26 @@ class FlightService {
     }
   }
 
+
   Future<String> getHomeDatabasePath() async {
-    // If on macOS, prefer the local path directly
+    // If on macOS, prefer the local path directly and ensure it exists
     if (Platform.isMacOS) {
        try {
           final libraryDir = await getLibraryDirectory();
-          final localPath = p.join(libraryDir.path, 'Application Support', 'Flight3', 'home.sqlite');
-          if (File(localPath).existsSync()) {
-             debugPrint("[FlightService] Found local home.sqlite: $localPath");
-             return localPath;
+          final dataDir = Directory(p.join(libraryDir.path, 'Application Support', 'Flight3'));
+          if (!dataDir.existsSync()) {
+             dataDir.createSync(recursive: true);
           }
+          final localPath = p.join(dataDir.path, 'home.sqlite');
+          
+          // Always ensure schema is valid locally
+          await _ensureLocalHomeSchema(localPath);
+          
+          debugPrint("[FlightService] Using local home.sqlite: $localPath");
+          return localPath;
        } catch (e) {
-         debugPrint("[FlightService] Failed to check local path: $e");
+         debugPrint("[FlightService] Failed to check/create local path: $e");
+         // Fallback to server if local fails (unlikely)
        }
     }
 
@@ -158,6 +160,84 @@ class FlightService {
       debugPrint("[FlightService] Error fetching home path: $e");
       rethrow;
     }
+  }
+
+  Future<void> _ensureLocalHomeSchema(String path) async {
+      try {
+        final db = await databaseFactory.openDatabase(path);
+        
+        // Enable WAL
+        await db.execute('PRAGMA journal_mode=WAL;');
+        
+        // Create Tables
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS "0_quick_links" (
+            label TEXT, 
+            target TEXT, 
+            icon TEXT, 
+            action TEXT, 
+            description TEXT
+          );
+        ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS "1_recent_files" (
+            filename TEXT, 
+            path TEXT, 
+            last_opened DATETIME,
+            size_mb REAL,
+            PRIMARY KEY (path)
+          );
+        ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS "2_banquet_links" (
+            name TEXT, 
+            original_url TEXT, 
+            description TEXT,
+            PRIMARY KEY (original_url)
+          );
+        ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS "3_query_styles" (
+            name TEXT,
+            sql TEXT,
+            description TEXT,
+            is_dangerous BOOLEAN,
+            PRIMARY KEY (name)
+          );
+        ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS "9_system_messages" (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, 
+            level TEXT, 
+            message TEXT
+          );
+        ''');
+        
+        // Check if Quick Links are empty, if so populate
+        final count = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM "0_quick_links"'));
+        if (count == 0) {
+           await db.transaction((txn) async {
+              await txn.rawInsert(
+                'INSERT INTO "0_quick_links" (label, target, icon, action, description) VALUES (?, ?, ?, ?, ?)',
+                ['📂 Open Local File', '', 'folder_open', 'open_file', 'Pick a SQLite database from your computer']
+              );
+              await txn.rawInsert(
+                'INSERT INTO "0_quick_links" (label, target, icon, action, description) VALUES (?, ?, ?, ?, ?)',
+                ['☁️ Connect to Remote', '', 'cloud', 'connect_remote', 'Enter a Flight URL or S3 bucket']
+              );
+              await txn.rawInsert(
+                'INSERT INTO "0_quick_links" (label, target, icon, action, description) VALUES (?, ?, ?, ?, ?)',
+                ['📝 New Query', '', 'edit', 'new_query', 'Start a scratchpad query']
+              );
+           });
+        }
+        
+        await db.close();
+      } catch (e) {
+         debugPrint("[FlightService] Failed to ensure local home schema: $e");
+         // Don't rethrow, just let it fail later or try server 
+      }
   }
 
   /// Downloads the file from Flight3 to a local path.

@@ -314,29 +314,10 @@ class _DBViewerPageState extends State<DBViewerPage> {
       final tables = await _dbService.getTables();
       
       if (tables.isEmpty && isHome) {
-          debugPrint("Home database is empty. Attempting repair (delete and fetch from server)...");
-          await _dbService.close(); // Close before deleting
-          
-          final file = File(path);
-          if (file.existsSync()) {
-              file.deleteSync();
-          }
-          
-          // If we just deleted it, we must refetch path from server to ensure recreation
-          if (context.mounted) {
-             ScaffoldMessenger.of(context).showSnackBar(
-               const SnackBar(content: Text('Repairing Home Database...'), duration: Duration(seconds: 1)),
-             );
-          }
-           
-          // Recursive call won't work easily because we need to clear _homePath cache in `_loadHome` or here?
-          // Instead, throw error so _loadHome catches it? 
-          // Better: return and let caller handle? No.
-          
-          // Let's just create a simple "repair" flag or callback.
-          // Simplest: Throw a special cleanup exception.
-          throw Exception("Home database was empty and has been deleted. Please try again.");
+          debugPrint("Home database is empty.");
+          // Do not delete. We will attempt to regenerate/fill it if needed, or just show empty.
       }
+
 
       setState(() {
         _viewType = isHome ? 0 : 1;
