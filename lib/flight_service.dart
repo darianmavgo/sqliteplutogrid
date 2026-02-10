@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:pocketbase/pocketbase.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 class FlightService {
   String baseUrl;
@@ -10,8 +12,16 @@ class FlightService {
   late final http.Client _httpClient;
 
   FlightService({String? baseUrl}) 
-      : baseUrl = baseUrl ?? const String.fromEnvironment('FLIGHT_URL', defaultValue: 'http://127.0.0.1:8090') {
-    debugPrint("[FlightService] Initialized with Base URL: $baseUrl");
+      : baseUrl = (baseUrl != null && baseUrl.isNotEmpty) 
+          ? baseUrl 
+          : const String.fromEnvironment('FLIGHT_URL', defaultValue: 'http://127.0.0.1:8090') {
+            
+    // Extra safety for empty string or "null" string
+    if (this.baseUrl.isEmpty || this.baseUrl == "null") {
+       this.baseUrl = 'http://127.0.0.1:8090';
+    }
+    
+    debugPrint("[FlightService] Initialized with Base URL: ${this.baseUrl}");
     initPb();
     _httpClient = http.Client();
   }
@@ -119,6 +129,20 @@ class FlightService {
   }
 
   Future<String> getHomeDatabasePath() async {
+    // If on macOS, prefer the local path directly
+    if (Platform.isMacOS) {
+       try {
+          final libraryDir = await getLibraryDirectory();
+          final localPath = p.join(libraryDir.path, 'Application Support', 'Flight3', 'home.sqlite');
+          if (File(localPath).existsSync()) {
+             debugPrint("[FlightService] Found local home.sqlite: $localPath");
+             return localPath;
+          }
+       } catch (e) {
+         debugPrint("[FlightService] Failed to check local path: $e");
+       }
+    }
+
     final cleanBase = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
     final uri = Uri.parse('$cleanBase/sqliter/home');
     

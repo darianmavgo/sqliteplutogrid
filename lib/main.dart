@@ -165,6 +165,14 @@ class _DBViewerPageState extends State<DBViewerPage> {
        await _openDatabaseFile(homePath, isHome: true);
        
      } catch (e) {
+       if (e.toString().contains("Home database was empty")) {
+           debugPrint("Retrying home load after repair...");
+           // ignore: use_build_context_synchronously
+           if (context.mounted) {
+              Future.delayed(const Duration(milliseconds: 500), () => _loadHome());
+           }
+           return;
+       }
        setState(() {
          _isLoading = false;
          _errorMessage = "Failed to load home: $e";
@@ -295,6 +303,46 @@ class _DBViewerPageState extends State<DBViewerPage> {
     }
   }
 
+  Future<void> _showConnectRemoteDialog() async {
+    final controller = TextEditingController();
+    await showMacosAlertDialog(
+      context: context,
+      builder: (_) => MacosAlertDialog(
+        appIcon: const MacosIcon(CupertinoIcons.cloud),
+        title: const Text('Connect to Remote'),
+        message: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Enter a Flight URL, S3 bucket, or Banquet URL:'),
+            const SizedBox(height: 12),
+            MacosTextField(
+              controller: controller,
+              placeholder: 'https://flight.example.com or s3://...',
+            ),
+          ],
+        ),
+        primaryButton: PushButton(
+          controlSize: ControlSize.large,
+          onPressed: () {
+            Navigator.of(context).pop();
+            if (controller.text.isNotEmpty) {
+               _loadPath(pathOverride: controller.text);
+            }
+          },
+          child: const Text('Connect'),
+        ),
+        secondaryButton: PushButton(
+          controlSize: ControlSize.large,
+          secondary: true,
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        horizontalActions: false,
+      ),
+    );
+  }
+
   Future<void> _openDatabaseFile(String path, {bool isHome = false}) async {
     // Only open .db and .sqlite files
     if (!path.endsWith('.db') && !path.endsWith('.sqlite')) {
@@ -305,6 +353,31 @@ class _DBViewerPageState extends State<DBViewerPage> {
       
       final tables = await _dbService.getTables();
       
+      if (tables.isEmpty && isHome) {
+          debugPrint("Home database is empty. Attempting repair (delete and fetch from server)...");
+          await _dbService.close(); // Close before deleting
+          
+          final file = File(path);
+          if (file.existsSync()) {
+              file.deleteSync();
+          }
+          
+          // If we just deleted it, we must refetch path from server to ensure recreation
+          if (context.mounted) {
+             ScaffoldMessenger.of(context).showSnackBar(
+               const SnackBar(content: Text('Repairing Home Database...'), duration: Duration(seconds: 1)),
+             );
+          }
+           
+          // Recursive call won't work easily because we need to clear _homePath cache in `_loadHome` or here?
+          // Instead, throw error so _loadHome catches it? 
+          // Better: return and let caller handle? No.
+          
+          // Let's just create a simple "repair" flag or callback.
+          // Simplest: Throw a special cleanup exception.
+          throw Exception("Home database was empty and has been deleted. Please try again.");
+      }
+
       setState(() {
         _viewType = isHome ? 0 : 1;
         _isLoading = false;
@@ -665,6 +738,20 @@ class _DBViewerPageState extends State<DBViewerPage> {
                           final path = row.cells['original_url']?.value?.toString();
                           if (path != null) {
                              _loadPath(pathOverride: path);
+                          }
+                      } else if (_currentTableName == "0_quick_links") {
+                          final action = row.cells['action']?.value?.toString();
+                          if (action == 'open_file') {
+                              _pickAndOpenFile();
+                          } else if (action == 'connect_remote') {
+                              _showConnectRemoteDialog();
+                          } else if (action == 'new_query') {
+                              setState(() {
+                                 _viewType = 2;
+                                 _gridTitle = "New Query";
+                                 _cachedBanquetRows = [];
+                                 _totalRows = 0;
+                              });
                           }
                       } else if (_currentTableName == "1_recent_files") {
                           final path = row.cells['path']?.value?.toString();
