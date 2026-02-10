@@ -702,8 +702,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
                           final action = row.cells['action']?.value?.toString();
                           if (action == 'open_file') {
                               _pickAndOpenFile();
-                          } else if (action == 'connect_remote') {
-                              _showConnectRemoteDialog();
                           } else if (action == 'new_query') {
                               setState(() {
                                  _viewType = 2;
