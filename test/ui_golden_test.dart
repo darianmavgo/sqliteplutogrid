@@ -11,36 +11,51 @@ import 'package:sqliter/widgets/database_grid_view.dart';
 // --- Manual Mocks (Simplified) ---
 class MockFlightService extends FlightService {
   MockFlightService() : super(baseUrl: 'http://mock');
+
   @override
   Future<List<RecordModel>> getBanquetLinks() async => [];
+  
   @override
   Future<Map<String, dynamic>> fetchBanquetData(String p, {int? offset, int? limit}) async => {'rows': []};
+  
   @override
   void initPb() {
-    pb = PocketBase(baseUrl);
+    // Avoid re-initializing the real PocketBase client in the mock constructor
+    // or just leave it blank since we override methods.
+    // However, the base constructor calls it.
+    // We can't avoid the base constructor
+    // But we can override this to do nothing if we don't want real PB.
   }
+  
   @override
   Future<void> authenticate(String e, String p) async {}
 
   @override
   Future<List<RecordModel>> getQueryStyles() async => [];
 
+  // This needs to match the Future<String> return type
   @override
   Future<String> getHomeDatabasePath() async => '/tmp/home.sqlite';
 }
 
 class MockDatabaseService extends DatabaseService {
+  // Use no-arg constructor if base allows, or pass dummy
   MockDatabaseService() : super();
+  
   @override
   Future<void> connect(String path) async {}
+  
   @override
   Future<List<String>> getTables() async => ['Table1', 'Table2'];
 
   @override
   Future<List<String>> getTableHeaders(String tableName) async => ['id', 'name', 'value'];
 
+  // Needs to match `Future<int> countRows(String t)`
   @override
   Future<int> countRows(String t) async => 10;
+  
+  // Needs to match `Future<List<Map<String, Object?>>> fetchRows(...)`
   @override
   Future<List<Map<String, Object?>>> fetchRows(String t, {int limit = 100, int offset = 0}) async {
     return List.generate(5, (i) => {'id': i, 'name': 'Row $i', 'value': 100 + i});
@@ -51,6 +66,13 @@ class MockDatabaseService extends DatabaseService {
 
   @override
   Future<List<Map<String, Object?>>> fetchPower2Samples(String tableName) async => [];
+  
+  // Missing override for executeQuery from previous interface changes?
+  @override
+  Future<List<Map<String, Object?>>> executeQuery(String sql) async => [];
+
+  @override
+  Future<void> close() async {}
 }
 
 

@@ -1,3 +1,10 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import 'package:pocketbase/pocketbase.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class FlightService {
@@ -5,7 +12,9 @@ class FlightService {
   late PocketBase pb;
   late final http.Client _httpClient;
 
-  FlightService({String? baseUrl}) 
+  final Directory? storageDirOverride;
+
+  FlightService({String? baseUrl, this.storageDirOverride}) 
       : baseUrl = (baseUrl != null && baseUrl.isNotEmpty) 
           ? baseUrl 
           : const String.fromEnvironment('FLIGHT_URL', defaultValue: 'http://127.0.0.1:8090') {
@@ -127,8 +136,7 @@ class FlightService {
     // If on macOS, prefer the local path directly and ensure it exists
     if (Platform.isMacOS) {
        try {
-          final libraryDir = await getLibraryDirectory();
-          final dataDir = Directory(p.join(libraryDir.path, 'Application Support', 'Flight3'));
+          final dataDir = storageDirOverride ?? Directory(p.join((await getLibraryDirectory()).path, 'Application Support', 'Flight3'));
           if (!dataDir.existsSync()) {
              dataDir.createSync(recursive: true);
           }
@@ -215,8 +223,12 @@ class FlightService {
         ''');
         
         // Check if Quick Links are empty, if so populate
-        final count = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM "0_quick_links"'));
-        if (count == 0) {
+        final result = await db.rawQuery('SELECT COUNT(*) FROM "0_quick_links"');
+        final count = (result.isNotEmpty && result.first.values.isNotEmpty) 
+            ? result.first.values.first as int? 
+            : 0;
+            
+        if (count == 0 || count == null) {
            await db.transaction((txn) async {
               await txn.rawInsert(
                 'INSERT INTO "0_quick_links" (label, target, icon, action, description) VALUES (?, ?, ?, ?, ?)',
