@@ -303,47 +303,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
     }
   }
 
-  Future<void> _showConnectRemoteDialog() async {
-    final controller = TextEditingController();
-    await showMacosAlertDialog(
-      context: context,
-      builder: (_) => MacosAlertDialog(
-        appIcon: const MacosIcon(CupertinoIcons.cloud),
-        title: const Text('Connect to Remote'),
-        message: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Enter a Flight URL, S3 bucket, or Banquet URL:'),
-            const SizedBox(height: 12),
-            MacosTextField(
-              controller: controller,
-              placeholder: 'https://flight.example.com or s3://...',
-            ),
-          ],
-        ),
-        primaryButton: PushButton(
-          controlSize: ControlSize.large,
-          onPressed: () {
-            Navigator.of(context).pop();
-            if (controller.text.isNotEmpty) {
-               _loadPath(pathOverride: controller.text);
-            }
-          },
-          child: const Text('Connect'),
-        ),
-        secondaryButton: PushButton(
-          controlSize: ControlSize.large,
-          secondary: true,
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        horizontalActions: false,
-      ),
-    );
-  }
-
-  Future<void> _openDatabaseFile(String path, {bool isHome = false}) async {
+  Future<void> _openDatabaseFile(String path, {bool isHome = false, String? logicalPath}) async {
     // Only open .db and .sqlite files
     if (!path.endsWith('.db') && !path.endsWith('.sqlite')) {
        throw Exception("Only .db and .sqlite files are supported for local opening.");
@@ -402,25 +362,25 @@ class _DBViewerPageState extends State<DBViewerPage> {
       }
       
       if (!isHome) {
-         _recordRecentFile(path);
+         _recordRecentFile(logicalPath ?? path, path);
       }
     } catch (e) {
        throw Exception("Failed to open database: $e");
     }
   }
 
-  Future<void> _recordRecentFile(String dbPath) async {
+  Future<void> _recordRecentFile(String displayPath, String actualFilePath) async {
      if (_homePath == null) return;
      try {
        // Open home db temporarily
        // We use a separate connection to avoid messing with the main view
        final homeDb = await openDatabase(_homePath!);
        
-       final fileSizeMb = File(dbPath).existsSync() ? (File(dbPath).lengthSync() / (1024 * 1024)) : 0.0;
+       final fileSizeMb = File(actualFilePath).existsSync() ? (File(actualFilePath).lengthSync() / (1024 * 1024)) : 0.0;
        
        await homeDb.insert('1_recent_files', {
-          'filename': p.basename(dbPath),
-          'path': dbPath,
+          'filename': p.basename(displayPath),
+          'path': displayPath,
           'last_opened': DateTime.now().toIso8601String(),
           'size_mb': fileSizeMb
        }, conflictAlgorithm: ConflictAlgorithm.replace);
@@ -566,9 +526,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
       
       if (serverPath == null) throw Exception("Server returned no path");
       
-      _pathController.text = serverPath;
-      windowManager.setTitle('🍊 $serverPath');
-      await _openDatabaseFile(serverPath);
+      windowManager.setTitle('🍊 $banquetPath');
+      await _openDatabaseFile(serverPath, logicalPath: banquetPath);
     } catch (e) {
       debugPrint("Flight3 sync failed: $e. Falling back to native picker.");
       

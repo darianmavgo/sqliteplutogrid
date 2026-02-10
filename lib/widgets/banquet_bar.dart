@@ -14,7 +14,10 @@ ToolBar buildBanquetBar({
 }) {
   return ToolBar(
     automaticallyImplyLeading: false,
-    leading: const SizedBox(width: 1),
+    leading: MacosIconButton(
+      icon: const Text('🍊', style: TextStyle(fontSize: 20)),
+      onPressed: onHomeTap,
+    ),
     alignment: Alignment.centerLeft,
     titleWidth: 5000,
     title: Row(
