@@ -1,0 +1,14 @@
+Analyzing sqliter...                                            
+
+warning • Unused import: 'package:flutter/services.dart' • integration_test/app_test.dart:2:8 • unused_import
+warning • Unused import: 'package:macos_ui/macos_ui.dart' • integration_test/app_test.dart:5:8 • unused_import
+   info • Don't invoke 'print' in production code • integration_test/app_test.dart:26:8 • avoid_print
+warning • The value of the local variable 'errorMsg' isn't used • integration_test/app_test.dart:28:14 • unused_local_variable
+   info • Don't invoke 'print' in production code • integration_test/app_test.dart:31:8 • avoid_print
+   info • Don't invoke 'print' in production code • integration_test/app_test.dart:33:11 • avoid_print
+warning • The declaration '_PathSegment.fromJson' isn't referenced • lib/widgets/breadcrumb_path_field.dart:262:24 • unused_element
+warning • Unused import: 'package:macos_ui/macos_ui.dart' • lib/widgets/database_grid_view.dart:3:8 • unused_import
+   info • Use 'const' literals as arguments to constructors of '@immutable' classes • lib/widgets/database_grid_view.dart:62:13 • prefer_const_literals_to_create_immutables
+   info • Don't invoke 'print' in production code • test/home_persistence_test.dart:24:5 • avoid_print
+
+10 issues found. (ran in 2.1s)

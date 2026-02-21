@@ -11,6 +11,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
+import 'package:banquet/banquet.dart';
 
 import 'db_service.dart';
 import 'flight_service.dart';
@@ -19,6 +20,38 @@ import 'utils/cell_link_renderer.dart';
 
 import 'widgets/banquet_bar.dart';
 import 'widgets/database_grid_view.dart';
+
+/// Custom column title renderer that replaces the default sort icons
+/// with "+" (ascending) and "-" (descending).
+Widget _buildColumnTitle(TrinaColumnTitleRendererContext ctx) {
+  final col = ctx.column;
+  String sortIcon = '';
+  if (col.sort.isAscending) sortIcon = ' +';
+  if (col.sort.isDescending) sortIcon = ' -';
+
+  return GestureDetector(
+    onTap: () {
+      // Cycle: none → ascending → descending → none
+      if (col.sort.isNone || col.sort.isDescending) {
+        ctx.stateManager.sortAscending(col);
+      } else {
+        ctx.stateManager.sortDescending(col);
+      }
+    },
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            '${col.title}$sortIcon',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          ),
+        ),
+        if (ctx.showContextIcon) ctx.contextMenuIcon,
+      ],
+    ),
+  );
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -409,12 +442,13 @@ class _DBViewerPageState extends State<DBViewerPage> {
       final result = await _dbService.getTableHeaders(tableName);
       final columns = result.map((colName) => TrinaColumn(
         field: colName,
-        title: colName.replaceAll('<', '').replaceAll('>', ''),
-        width: 100, // Default width
+        title: colName,
+        width: 100,
         type: TrinaColumnType.text(),
         enableSorting: true,
         enableFilterMenuItem: false,
         enableContextMenu: false,
+        titleRenderer: _buildColumnTitle,
         renderer: (rendererContext) {
            final displayValue = rendererContext.cell.value?.toString() ?? '';
            return CellLinkWidget(
@@ -518,12 +552,13 @@ class _DBViewerPageState extends State<DBViewerPage> {
         
         optimizedColumns.add(TrinaColumn(
           field: key,
-          title: key.replaceAll('<', '').replaceAll('>', ''),
+          title: key,
           width: maxWidth,
           type: TrinaColumnType.text(),
           enableSorting: true,
           enableFilterMenuItem: false,
           enableContextMenu: false,
+          titleRenderer: _buildColumnTitle,
           renderer: (rendererContext) {
              final displayValue = rendererContext.cell.value?.toString() ?? '';
              return CellLinkWidget(
@@ -598,42 +633,63 @@ class _DBViewerPageState extends State<DBViewerPage> {
   }
 
   PlatformMenu _buildPathMenu(String fullPath) {
-    List<String> rawSegments = [];
-    if (fullPath.contains(';')) {
-       // Banquet URL format `data.db;table`
-       rawSegments = fullPath.split(';');
-    } else {
-       // File path format
-       rawSegments = fullPath.split('/').where((s) => s.isNotEmpty).toList();
-    }
+    if (fullPath.isEmpty) return const PlatformMenu(label: '🍊', menus: []);
 
-    // Build cumulative paths
-    List<String> paths = [];
-    String current = fullPath.startsWith('/') ? '/' : '';
-    for (int i = 0; i < rawSegments.length; i++) {
-       if (fullPath.contains(';')) {
-          if (i > 0) current += ';';
-          current += rawSegments[i];
-       } else {
+    try {
+      final b = parseBanquet(fullPath);
+      final List<String> paths = [];
+
+      // Add segments based on banquet structure
+      if (b.dataSetPath.isNotEmpty) {
+        paths.add(b.dataSetPath);
+      }
+      if (b.table.isNotEmpty) {
+        paths.add('${b.dataSetPath};${b.table}');
+      }
+      if (b.columnPath.isNotEmpty && b.table.isNotEmpty) {
+        paths.add('${b.dataSetPath};${b.table};${b.columnPath}');
+      } else if (b.columnPath.isNotEmpty) {
+        // Flat dataset with column path
+        paths.add('${b.dataSetPath};;${b.columnPath}');
+      }
+
+      // If no paths found (maybe it's just a raw path), fallback to simple split
+      if (paths.isEmpty) {
+        List<String> rawSegments = fullPath.split('/').where((s) => s.isNotEmpty).toList();
+        String current = fullPath.startsWith('/') ? '/' : '';
+        for (int i = 0; i < rawSegments.length; i++) {
           if (i > 0 || (current != '/' && current.isNotEmpty)) current += '/';
           current += rawSegments[i];
-       }
-       paths.add(current);
+          paths.add(current);
+        }
+      }
+
+      // Reverse (longest to shortest) and cap at 10
+      List<String> sortedPaths = paths.reversed.take(10).toList();
+
+      return PlatformMenu(
+        label: fullPath,
+        menus: sortedPaths.map((p) => PlatformMenuItem(
+          label: p,
+          onSelected: () {
+            _pathController.text = p;
+            _loadPath();
+          },
+        )).toList(),
+      );
+    } catch (e) {
+      debugPrint("Error building path menu with banquet: $e");
+      // Fallback to minimal menu
+      return PlatformMenu(
+        label: fullPath,
+        menus: [
+          PlatformMenuItem(
+            label: fullPath,
+            onSelected: () {},
+          ),
+        ],
+      );
     }
-
-    // Reverse (longest to shortest) and cap at 10
-    List<String> sortedPaths = paths.reversed.take(10).toList();
-
-    return PlatformMenu(
-      label: fullPath,
-      menus: sortedPaths.map((p) => PlatformMenuItem(
-        label: p,
-        onSelected: () {
-          _pathController.text = p;
-          _loadPath();
-        },
-      )).toList(),
-    );
   }
 
   // ---------------------------------------------------------------------------
@@ -737,55 +793,58 @@ class _DBViewerPageState extends State<DBViewerPage> {
              }
              
              // UNIFIED GRID VIEW
-             return DatabaseGridView(
-               key: _gridKey,
-               columns: _gridColumns,
-               tableName: _gridTitle,
-               totalRows: _totalRows,
-               onFetchRows: _fetchRows,
-               onCellNavigate: (value) {
-                 _loadPath(pathOverride: value);
-               },
-               onRowDoubleTap: (row) {
-                  // Interaction Logic
-                  if (_viewType == 0) { // Home Mode
-                      if (_currentTableName == "2_banquet_links") {
-                          final path = row.cells['original_url']?.value?.toString();
-                          if (path != null) {
-                             _loadPath(pathOverride: path);
-                          }
-                      } else if (_currentTableName == "0_quick_links") {
-                          final action = row.cells['action']?.value?.toString();
-                          if (action == 'open_file') {
-                              _pickAndOpenFile();
-                          } else if (action == 'new_query') {
-                              setState(() {
-                                 _viewType = 2;
-                                 _gridTitle = "New Query";
-                                 _cachedBanquetRows = [];
-                                 _totalRows = 0;
-                              });
-                          }
-                      } else if (_currentTableName == "1_recent_files") {
-                          final path = row.cells['path']?.value?.toString();
-                          if (path != null) {
-                             _loadPath(pathOverride: path);
-                          }
-                      } else if (_currentTableName == "3_query_styles") {
-                          final sql = row.cells['sql']?.value?.toString();
-                          if (sql != null) {
-                             Clipboard.setData(ClipboardData(text: sql));
-                             // Optional: Show a toast/snackbar? 
-                             // For now, maybe just flash the title?
-                             final oldTitle = _gridTitle;
-                             setState(() => _gridTitle = "Copied to Clipboard!");
-                             Future.delayed(const Duration(seconds: 1), () {
-                                if (mounted) setState(() => _gridTitle = oldTitle);
-                             });
-                          }
-                      }
-                  }
-               },
+             return Material(
+               color: Colors.transparent,
+               child: DatabaseGridView(
+                 key: _gridKey,
+                 columns: _gridColumns,
+                 tableName: _gridTitle,
+                 totalRows: _totalRows,
+                 onFetchRows: _fetchRows,
+                 onCellNavigate: (value) {
+                   _loadPath(pathOverride: value);
+                 },
+                 onRowDoubleTap: (row) {
+                    // Interaction Logic
+                    if (_viewType == 0) { // Home Mode
+                        if (_currentTableName == "2_banquet_links") {
+                            final path = row.cells['original_url']?.value?.toString();
+                            if (path != null) {
+                               _loadPath(pathOverride: path);
+                            }
+                        } else if (_currentTableName == "0_quick_links") {
+                            final action = row.cells['action']?.value?.toString();
+                            if (action == 'open_file') {
+                                _pickAndOpenFile();
+                            } else if (action == 'new_query') {
+                                setState(() {
+                                   _viewType = 2;
+                                   _gridTitle = "New Query";
+                                   _cachedBanquetRows = [];
+                                   _totalRows = 0;
+                                });
+                            }
+                        } else if (_currentTableName == "1_recent_files") {
+                            final path = row.cells['path']?.value?.toString();
+                            if (path != null) {
+                               _loadPath(pathOverride: path);
+                            }
+                        } else if (_currentTableName == "3_query_styles") {
+                            final sql = row.cells['sql']?.value?.toString();
+                            if (sql != null) {
+                               Clipboard.setData(ClipboardData(text: sql));
+                               // Optional: Show a toast/snackbar? 
+                               // For now, maybe just flash the title?
+                               final oldTitle = _gridTitle;
+                               setState(() => _gridTitle = "Copied to Clipboard!");
+                               Future.delayed(const Duration(seconds: 1), () {
+                                  if (mounted) setState(() => _gridTitle = oldTitle);
+                               });
+                            }
+                        }
+                    }
+                 },
+               ),
              );
           },
         ),

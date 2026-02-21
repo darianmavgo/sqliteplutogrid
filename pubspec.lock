@@ -33,6 +33,15 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.13.0"
+  banquet:
+    dependency: "direct main"
+    description:
+      path: dart
+      ref: HEAD
+      resolved-ref: "8c37449aab7f021c054e21c7c8cdd0ecf95ee0e9"
+      url: "https://github.com/darianmavgo/banquet.git"
+    source: git
+    version: "0.1.0"
   barcode:
     dependency: transitive
     description:

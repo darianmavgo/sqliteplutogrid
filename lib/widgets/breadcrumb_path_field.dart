@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:banquet/banquet.dart';
 import '../flight_service.dart';
 
 /// Interactive breadcrumb-style path field where each segment is double-clickable
@@ -49,20 +50,50 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
     super.dispose();
   }
   
-  // Parse path segments using server API
+  // Parse path segments using banquet library
   Future<void> _parsePathSegments(String path) async {
     if (path.isEmpty || path == _lastParsedPath) return;
     
     try {
-      final response = await widget.flightService.get(
-        '/api/parse-path',
-        queryParams: {'url': path},
-      );
+      final b = parseBanquet(path);
+      final segments = <_PathSegment>[];
       
-      final segments = (response['segments'] as List? ?? [])
-          .map((json) => _PathSegment.fromJson(json))
-          .toList();
+      // 1. Dataset Segment
+      if (b.dataSetPath.isNotEmpty) {
+        segments.add(_PathSegment(
+          text: b.dataSetPath.split('/').last,
+          path: b.dataSetPath,
+          exists: true,
+          type: 'file',
+        ));
+      }
       
+      // 2. Table Segment
+      if (b.table.isNotEmpty) {
+        segments.add(_PathSegment(
+          text: b.table,
+          path: '${b.dataSetPath};${b.table}',
+          exists: true,
+          type: 'banquet_table',
+        ));
+      }
+      
+      // 3. Column/Filter Segment
+      if (b.columnPath.isNotEmpty) {
+        String fullPath;
+        if (b.table.isNotEmpty) {
+          fullPath = '${b.dataSetPath};${b.table};${b.columnPath}';
+        } else {
+          fullPath = '${b.dataSetPath};;${b.columnPath}';
+        }
+        segments.add(_PathSegment(
+          text: b.columnPath,
+          path: fullPath,
+          exists: true,
+          type: 'banquet_column', // Added custom type for clarity, though not in original enum
+        ));
+      }
+
       setState(() {
         _cachedSegments = segments;
         _lastParsedPath = path;
