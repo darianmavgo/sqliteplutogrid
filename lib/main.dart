@@ -15,6 +15,7 @@ import 'package:path/path.dart' as p;
 import 'db_service.dart';
 import 'flight_service.dart';
 import 'utils/formatters.dart';
+import 'utils/cell_link_renderer.dart';
 
 import 'widgets/banquet_bar.dart';
 import 'widgets/database_grid_view.dart';
@@ -99,6 +100,8 @@ class DBViewerPage extends StatefulWidget {
 }
 
 class _DBViewerPageState extends State<DBViewerPage> {
+  static const _fileOpenChannel = MethodChannel('com.darianmavgo.sqliter/file_open');
+
   // Services
   late final DatabaseService _dbService;
   late final FlightService _flightService;
@@ -138,8 +141,30 @@ class _DBViewerPageState extends State<DBViewerPage> {
     // Perform async initialization
     _initServices();
     
+    // Listen for file open events
+    _fileOpenChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onFileOpened') {
+        final String path = call.arguments;
+        _loadPath(pathOverride: path);
+      }
+    });
+
+    // Check for pending files
+    _checkPendingFile();
+    
     // Initial checks - Load Home DB
     _loadHome();
+  }
+
+  Future<void> _checkPendingFile() async {
+    try {
+      final String? pendingPath = await _fileOpenChannel.invokeMethod('getPendingFile');
+      if (pendingPath != null && pendingPath.isNotEmpty) {
+        _loadPath(pathOverride: pendingPath);
+      }
+    } catch (e) {
+      debugPrint('Failed to get pending file: $e');
+    }
   }
 
   Future<void> _initServices() async {
@@ -384,11 +409,20 @@ class _DBViewerPageState extends State<DBViewerPage> {
       final result = await _dbService.getTableHeaders(tableName);
       final columns = result.map((colName) => TrinaColumn(
         field: colName,
-        title: colName,
+        title: colName.replaceAll('<', '').replaceAll('>', ''),
         width: 100, // Default width
         type: TrinaColumnType.text(),
+        enableSorting: true,
         enableFilterMenuItem: false,
         enableContextMenu: false,
+        renderer: (rendererContext) {
+           final displayValue = rendererContext.cell.value?.toString() ?? '';
+           return CellLinkWidget(
+              value: displayValue,
+              onNavigate: (path) => _loadPath(pathOverride: path),
+              onOpenUrl: (url) => openUrl(url),
+           );
+        },
       )).toList();
 
       // Get count
@@ -484,11 +518,20 @@ class _DBViewerPageState extends State<DBViewerPage> {
         
         optimizedColumns.add(TrinaColumn(
           field: key,
-          title: key,
+          title: key.replaceAll('<', '').replaceAll('>', ''),
           width: maxWidth,
           type: TrinaColumnType.text(),
+          enableSorting: true,
           enableFilterMenuItem: false,
           enableContextMenu: false,
+          renderer: (rendererContext) {
+             final displayValue = rendererContext.cell.value?.toString() ?? '';
+             return CellLinkWidget(
+                value: displayValue,
+                onNavigate: (path) => _loadPath(pathOverride: path),
+                onOpenUrl: (url) => openUrl(url),
+             );
+          },
         ));
       }
     }
@@ -552,6 +595,45 @@ class _DBViewerPageState extends State<DBViewerPage> {
           });
       }
     }
+  }
+
+  PlatformMenu _buildPathMenu(String fullPath) {
+    List<String> rawSegments = [];
+    if (fullPath.contains(';')) {
+       // Banquet URL format `data.db;table`
+       rawSegments = fullPath.split(';');
+    } else {
+       // File path format
+       rawSegments = fullPath.split('/').where((s) => s.isNotEmpty).toList();
+    }
+
+    // Build cumulative paths
+    List<String> paths = [];
+    String current = fullPath.startsWith('/') ? '/' : '';
+    for (int i = 0; i < rawSegments.length; i++) {
+       if (fullPath.contains(';')) {
+          if (i > 0) current += ';';
+          current += rawSegments[i];
+       } else {
+          if (i > 0 || (current != '/' && current.isNotEmpty)) current += '/';
+          current += rawSegments[i];
+       }
+       paths.add(current);
+    }
+
+    // Reverse (longest to shortest) and cap at 10
+    List<String> sortedPaths = paths.reversed.take(10).toList();
+
+    return PlatformMenu(
+      label: fullPath,
+      menus: sortedPaths.map((p) => PlatformMenuItem(
+        label: p,
+        onSelected: () {
+          _pathController.text = p;
+          _loadPath();
+        },
+      )).toList(),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -627,18 +709,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
           ],
         ),
         if (_pathController.text.isNotEmpty)
-          PlatformMenu(
-            label: _pathController.text,
-            menus: [
-              PlatformMenuItem(
-                label: 'Copy Path',
-                onSelected: () {
-                  // Not implementing clipboard copy for brevity unless requested
-                  // Or maybe just show it
-                },
-              ),
-            ],
-          ),
+          _buildPathMenu(_pathController.text),
       ],
       child: MacosWindow(
         child: MacosScaffold(
@@ -672,6 +743,9 @@ class _DBViewerPageState extends State<DBViewerPage> {
                tableName: _gridTitle,
                totalRows: _totalRows,
                onFetchRows: _fetchRows,
+               onCellNavigate: (value) {
+                 _loadPath(pathOverride: value);
+               },
                onRowDoubleTap: (row) {
                   // Interaction Logic
                   if (_viewType == 0) { // Home Mode

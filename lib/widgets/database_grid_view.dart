@@ -9,6 +9,8 @@ class DatabaseGridView extends StatefulWidget {
   final int? totalRows;
   final Future<List<TrinaRow>> Function(int offset) onFetchRows;
   final Function(TrinaRow)? onRowDoubleTap;
+  /// Called when a cell value looks like a URL or sqlite path.
+  final Function(String value)? onCellNavigate;
 
   const DatabaseGridView({
     super.key,
@@ -17,6 +19,7 @@ class DatabaseGridView extends StatefulWidget {
     this.totalRows,
     required this.onFetchRows,
     this.onRowDoubleTap,
+    this.onCellNavigate,
   });
 
   @override
@@ -24,6 +27,27 @@ class DatabaseGridView extends StatefulWidget {
 }
 
 class _DatabaseGridViewState extends State<DatabaseGridView> {
+  TrinaGridStateManager? _stateManager;
+  bool _hasAutoSized = false;
+
+  /// Auto-fit every column based on rendered content.
+  void _autoFitAllColumns() {
+    final sm = _stateManager;
+    if (sm == null) return;
+    for (final col in sm.columns) {
+      sm.autoFitColumn(context, col);
+    }
+  }
+
+  @override
+  void didUpdateWidget(DatabaseGridView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Reset auto-size flag when the table changes so it runs again for the new table.
+    if (oldWidget.tableName != widget.tableName) {
+      _hasAutoSized = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.tableName == null) {
@@ -32,12 +56,14 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
 
     final config = SqliterTheme.getGridConfig(context);
 
-    // Use a key based on tableName to force rebuild when table changes
-    // This ensures fetching starts fro page 1 for new table
     return TrinaGrid(
       key: ValueKey(widget.tableName),
       columns: widget.columns,
-      rows: [], // Initial empty rows, TrinaLazyPagination will fetch
+      rows: [],
+      onLoaded: (event) {
+        _stateManager = event.stateManager;
+        _hasAutoSized = false;
+      },
       onRowDoubleTap: (event) {
         if (widget.onRowDoubleTap != null) {
           widget.onRowDoubleTap!(event.row);
@@ -45,22 +71,31 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
       },
       configuration: config,
       createFooter: (stateManager) {
+        _stateManager = stateManager;
         return TrinaLazyPagination(
           stateManager: stateManager,
           initialPage: 1,
-          initialPageSize: 200, // Matches the limit in main.dart _fetchDatabaseRows
+          initialPageSize: 200,
           fetch: (request) async {
-             final offset = (request.page - 1) * request.pageSize;
-             final rows = await widget.onFetchRows(offset);
-             
-             final totalRecords = widget.totalRows ?? 0;
-             final totalPage = (totalRecords / request.pageSize).ceil();
-             
-             return TrinaLazyPaginationResponse(
-               totalPage: totalPage > 0 ? totalPage : 1,
-               rows: rows,
-               totalRecords: totalRecords,
-             );
+            final offset = (request.page - 1) * request.pageSize;
+            final rows = await widget.onFetchRows(offset);
+
+            // Auto-size all columns once after the first page arrives.
+            if (!_hasAutoSized && request.page == 1) {
+              _hasAutoSized = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _autoFitAllColumns();
+              });
+            }
+
+            final totalRecords = widget.totalRows ?? 0;
+            final totalPage = (totalRecords / request.pageSize).ceil();
+
+            return TrinaLazyPaginationResponse(
+              totalPage: totalPage > 0 ? totalPage : 1,
+              rows: rows,
+              totalRecords: totalRecords,
+            );
           },
           showTotalRows: true,
           showPageSizeSelector: false,

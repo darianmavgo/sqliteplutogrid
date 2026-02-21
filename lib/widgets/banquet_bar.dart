@@ -15,10 +15,13 @@ ToolBar buildBanquetBar({
   return ToolBar(
     automaticallyImplyLeading: false,
     padding: EdgeInsets.zero,
-    leading: MacosIconButton(
-      padding: EdgeInsets.zero,
-      icon: const Text('🍊', style: TextStyle(fontSize: 20)),
-      onPressed: onHomeTap,
+    leading: Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: MacosIconButton(
+        padding: EdgeInsets.zero,
+        icon: const Text('🍊', style: TextStyle(fontSize: 20)),
+        onPressed: onHomeTap,
+      ),
     ),
     alignment: Alignment.centerLeft,
     titleWidth: 5000,
