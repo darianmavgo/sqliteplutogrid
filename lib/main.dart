@@ -324,10 +324,11 @@ class _DBViewerPageState extends State<DBViewerPage> {
         _isLoading = false;
         // For Home, prefer "2_banquet_links" or "0_quick_links"
         if (isHome) {
-            if (tables.contains("2_banquet_links")) {
-                _currentTableName = "2_banquet_links";
-            } else if (tables.contains("0_quick_links")) {
+            // Prioritize Quick Links (0) so users can see actions [Open, Connect]
+            if (tables.contains("0_quick_links")) {
                 _currentTableName = "0_quick_links";
+            } else if (tables.contains("2_banquet_links")) {
+                _currentTableName = "2_banquet_links";
             } else if (tables.isNotEmpty) {
                  _currentTableName = tables.first;
             }
@@ -599,7 +600,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
           menus: [
             PlatformMenuItem(
               label: 'Go Home',
-              shortcut: const CharacterActivator('h', meta: true),
+              shortcut: const SingleActivator(LogicalKeyboardKey.keyH, meta: true, shift: true),
               onSelected: () {
                 _loadHome();
               },

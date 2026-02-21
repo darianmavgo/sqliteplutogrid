@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:trina_grid/trina_grid.dart';
+import 'package:macos_ui/macos_ui.dart';
 import '../theme/sqliter_theme.dart';
 
 class DatabaseGridView extends StatefulWidget {
@@ -23,52 +24,48 @@ class DatabaseGridView extends StatefulWidget {
 }
 
 class _DatabaseGridViewState extends State<DatabaseGridView> {
-
   @override
   Widget build(BuildContext context) {
-    if (widget.columns.isEmpty) {
-       return const Center(child: Text("Select a table to view data"));
+    if (widget.tableName == null) {
+      return const Center(child: Text("No Table Selected"));
     }
 
-    return Column(
-      children: [
-        // Grid
-        // Grid
-        Expanded(
-          child: Material(
-            type: MaterialType.transparency, // Keep it transparent as we handle background
-            child: TrinaGrid(
-              columns: widget.columns,
-              // ignore: prefer_const_literals_to_create_immutables
-              rows: [],
-              onLoaded: (TrinaGridOnLoadedEvent event) {
-                // event.stateManager.setShowColumnFilter(true);
-              },
-              onRowDoubleTap: widget.onRowDoubleTap != null ? (event) => widget.onRowDoubleTap!(event.row) : null,
-              createFooter: (stateManager) {
-                return TrinaInfinityScrollRows(
-                  fetch: (request) async {
-                     final offset = stateManager.refRows.length;
-                     final newRows = await widget.onFetchRows(offset);
-                     
-                     // Update UI to show new loaded count
-                     if (mounted && newRows.isNotEmpty) {
-                       setState(() {}); // Refresh to update stats header if we were showing loaded count
-                     }
-                     
-                     return TrinaInfinityScrollRowsResponse(
-                       isLast: newRows.isEmpty,
-                       rows: newRows,
-                     );
-                  },
-                  stateManager: stateManager,
-                );
-              },
-              configuration: SqliterTheme.getGridConfig(context),
-            ),
-          ),
-        ),
-      ],
+    final config = SqliterTheme.getGridConfig(context);
+
+    // Use a key based on tableName to force rebuild when table changes
+    // This ensures fetching starts fro page 1 for new table
+    return TrinaGrid(
+      key: ValueKey(widget.tableName),
+      columns: widget.columns,
+      rows: [], // Initial empty rows, TrinaLazyPagination will fetch
+      onRowDoubleTap: (event) {
+        if (widget.onRowDoubleTap != null) {
+          widget.onRowDoubleTap!(event.row);
+        }
+      },
+      configuration: config,
+      createFooter: (stateManager) {
+        return TrinaLazyPagination(
+          stateManager: stateManager,
+          initialPage: 1,
+          initialPageSize: 200, // Matches the limit in main.dart _fetchDatabaseRows
+          fetch: (request) async {
+             final offset = (request.page - 1) * request.pageSize;
+             final rows = await widget.onFetchRows(offset);
+             
+             final totalRecords = widget.totalRows ?? 0;
+             final totalPage = (totalRecords / request.pageSize).ceil();
+             
+             return TrinaLazyPaginationResponse(
+               totalPage: totalPage > 0 ? totalPage : 1,
+               rows: rows,
+               totalRecords: totalRecords,
+             );
+          },
+          showTotalRows: true,
+          showPageSizeSelector: false,
+        );
+      },
     );
   }
 }
