@@ -11,6 +11,8 @@ ToolBar buildBanquetBar({
   required Function(String) onNavigate,
   required FlightService flightService,
   required VoidCallback onHomeTap,
+  bool tileMode = false,
+  VoidCallback? onToggleTile,
 }) {
   return ToolBar(
     automaticallyImplyLeading: false,
@@ -30,14 +32,32 @@ ToolBar buildBanquetBar({
         Expanded(
           child: BreadcrumbPathField(
             controller: pathController,
-            placeholder: 'Banquet URL (e.g. data.db;table)',
+            placeholder: 'Banquet URL — append #tile for thumbnail view',
             onNavigate: onNavigate,
-            flightService: flightService, 
+            flightService: flightService,
           ),
         ),
-        // Add trailing drag area just in case (optional, but good for UX if path is short)
+        // Tile / Grid toggle button — only shown when data is loaded
+        if (onToggleTile != null)
+          Padding(
+            padding: const EdgeInsets.only(left: 6, right: 4),
+            child: Tooltip(
+              message: tileMode ? 'Switch to table grid' : 'Switch to tile view (#tile)',
+              child: MacosIconButton(
+                padding: const EdgeInsets.all(4),
+                icon: Icon(
+                  tileMode ? CupertinoIcons.table : CupertinoIcons.square_grid_2x2,
+                  size: 16,
+                  color: tileMode
+                      ? MacosColors.systemOrangeColor
+                      : MacosColors.white.withValues(alpha: 0.6),
+                ),
+                onPressed: onToggleTile,
+              ),
+            ),
+          ),
         const DragToMoveArea(
-             child: SizedBox(width: 0, height: 40),
+          child: SizedBox(width: 4, height: 40),
         ),
       ],
     ),

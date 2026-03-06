@@ -20,6 +20,7 @@ import 'utils/cell_link_renderer.dart';
 
 import 'widgets/banquet_bar.dart';
 import 'widgets/database_grid_view.dart';
+import 'widgets/tile_view.dart';
 
 /// Custom column title renderer that replaces the default sort icons
 /// with "+" (ascending) and "-" (descending).
@@ -162,6 +163,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
   int _viewType = 0; 
   String? _currentTableName; // For DB view
   List<TrinaRow> _cachedBanquetRows = []; // For Query view
+  bool _tileMode = false; // When true, show TileView instead of Grid
 
   @override
   void initState() {
@@ -211,6 +213,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
        _isLoading = true;
        _errorMessage = null;
        _viewType = 0; // Home Mode
+       _tileMode = false; // Always grid on home
        _pathController.clear();
      });
      
@@ -250,13 +253,26 @@ class _DBViewerPageState extends State<DBViewerPage> {
   // ---------------------------------------------------------------------------
 
   Future<void> _loadPath({String? pathOverride}) async {
-    final path = pathOverride ?? _pathController.text.trim();
+    final rawPath = pathOverride ?? _pathController.text.trim();
+    if (rawPath.isEmpty) return;
+
+    // Detect and strip #tile keyword
+    final hasTile = rawPath.contains('#tile');
+    final path = rawPath.replaceAll('#tile', '').trim();
+
+    // Keep #tile in the URL bar so breadcrumb shows the chip
+    final displayPath = hasTile ? '$path#tile' : path;
+    if (pathOverride != null) {
+      _pathController.text = displayPath;
+    }
+
+    setState(() {
+      _tileMode = hasTile;
+    });
+
     if (path.isEmpty) return;
     
     // Update controller if override used, to reflect current path in UI
-    if (pathOverride != null) {
-      _pathController.text = path;
-    }
     windowManager.setTitle('🍊 $path');
 
     setState(() {
@@ -780,6 +796,16 @@ class _DBViewerPageState extends State<DBViewerPage> {
             _pathController.text = path;
             _loadPath();
           },
+          tileMode: _tileMode,
+          onToggleTile: (_gridColumns.isNotEmpty)
+              ? () {
+                  // Toggle by appending/removing #tile from the current path
+                  final cur = _pathController.text.replaceAll('#tile', '').trim();
+                  final next = _tileMode ? cur : '$cur#tile';
+                  _pathController.text = next;
+                  setState(() => _tileMode = !_tileMode);
+                }
+              : null,
       ),
       children: [
         ContentArea(
@@ -795,16 +821,24 @@ class _DBViewerPageState extends State<DBViewerPage> {
              // UNIFIED GRID VIEW
              return Material(
                color: Colors.transparent,
-               child: DatabaseGridView(
-                 key: _gridKey,
-                 columns: _gridColumns,
-                 tableName: _gridTitle,
-                 totalRows: _totalRows,
-                 onFetchRows: _fetchRows,
-                 onCellNavigate: (value) {
-                   _loadPath(pathOverride: value);
-                 },
-                 onRowDoubleTap: (row) {
+               child: _tileMode
+                   ? TileView(
+                       key: ValueKey('tile_$_gridTitle'),
+                       columns: _gridColumns,
+                       onFetchRows: _fetchRows,
+                       totalRows: _totalRows,
+                       onNavigate: (path) => _loadPath(pathOverride: path),
+                     )
+                   : DatabaseGridView(
+                       key: _gridKey,
+                       columns: _gridColumns,
+                       tableName: _gridTitle,
+                       totalRows: _totalRows,
+                       onFetchRows: _fetchRows,
+                       onCellNavigate: (value) {
+                         _loadPath(pathOverride: value);
+                       },
+                       onRowDoubleTap: (row) {
                     // Interaction Logic
                     if (_viewType == 0) { // Home Mode
                         if (_currentTableName == "2_banquet_links") {

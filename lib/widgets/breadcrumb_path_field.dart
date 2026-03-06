@@ -53,9 +53,12 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
   // Parse path segments using banquet library
   Future<void> _parsePathSegments(String path) async {
     if (path.isEmpty || path == _lastParsedPath) return;
+
+    // Strip #tile before parsing so segments display cleanly
+    final cleanPath = path.replaceAll('#tile', '').trimRight();
     
     try {
-      final b = parseBanquet(path);
+      final b = parseBanquet(cleanPath);
       final segments = <_PathSegment>[];
       
       // 1. Dataset Segment
@@ -168,6 +171,9 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
     }
     
     // Breadcrumb display mode
+    final hasTile = widget.controller.text.contains('#tile');
+    final pathWithoutTile = widget.controller.text.replaceAll('#tile', '').trimRight();
+
     return GestureDetector(
       onTap: () {
         // Single tap enters edit mode
@@ -221,7 +227,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
                   return Center(
                     child: _BreadcrumbSegment(
                       segment: _cachedSegments[index],
-                      isLast: index == _cachedSegments.length - 1,
+                      isLast: index == _cachedSegments.length - 1 && !hasTile,
                       onTap: () {
                          if (_cachedSegments[index].path.isNotEmpty) {
                            widget.onNavigate(_cachedSegments[index].path);
@@ -232,6 +238,31 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
                 },
               ),
             ),
+
+            // #tile chip — tappable to remove
+            if (hasTile)
+              GestureDetector(
+                onTap: () => widget.onNavigate(pathWithoutTile),
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: MacosColors.systemOrangeColor.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: MacosColors.systemOrangeColor.withValues(alpha: 0.6),
+                    ),
+                  ),
+                  child: const Text(
+                    '⊞ tile ✕',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: MacosColors.systemOrangeColor,
+                    ),
+                  ),
+                ),
+              ),
             
             if (widget.suffix != null)
               Padding(
