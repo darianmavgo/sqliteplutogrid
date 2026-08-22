@@ -78,7 +78,7 @@ class DatabaseService {
       throw Exception("Database file not found at $path");
     }
     await close();
-    _db = await openDatabase(path);
+    _db = await databaseFactory.openDatabase(path);
     _currentDbPath = path;
   }
 

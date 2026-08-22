@@ -39,6 +39,10 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
         setState(() {
           _isEditMode = false;
         });
+        final text = widget.controller.text.trim();
+        if (text.isNotEmpty) {
+          widget.onNavigate(text);
+        }
       }
     });
   }
@@ -56,7 +60,88 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
 
     // Strip #tile before parsing so segments display cleanly
     final cleanPath = path.replaceAll('#tile', '').trimRight();
+    final upper = cleanPath.trim().toUpperCase();
+
+    if (upper.startsWith('SELECT') ||
+        upper.startsWith('PRAGMA') ||
+        upper.startsWith('WITH') ||
+        upper.startsWith('EXPLAIN') ||
+        upper.startsWith('INSERT') ||
+        upper.startsWith('UPDATE') ||
+        upper.startsWith('DELETE')) {
+      if (mounted) {
+        setState(() {
+          _cachedSegments = [
+            _PathSegment(
+              text: cleanPath,
+              path: cleanPath,
+              exists: true,
+              type: 'sql',
+            ),
+          ];
+          _lastParsedPath = path;
+        });
+      }
+      return;
+    }
     
+    final isLocalFsPath = cleanPath.startsWith('/') ||
+        cleanPath.startsWith('~/') ||
+        (cleanPath.contains('/') && (cleanPath.contains('.db') || cleanPath.contains('.sqlite')));
+
+    if (isLocalFsPath) {
+      String localDbPart = cleanPath;
+      String? tablePart;
+      if (cleanPath.contains(';')) {
+        final parts = cleanPath.split(';');
+        localDbPart = parts[0].trim();
+        if (parts.length > 1 && parts[1].trim().isNotEmpty) {
+          tablePart = parts[1].trim();
+        }
+      }
+
+      final parts = localDbPart.split('/').where((s) => s.isNotEmpty).toList();
+      final segments = <_PathSegment>[];
+      String buffer = localDbPart.startsWith('/') ? '/' : '';
+
+      for (int i = 0; i < parts.length; i++) {
+        if (i > 0 || (buffer != '/' && buffer.isNotEmpty)) {
+          buffer += '/';
+        }
+        buffer += parts[i];
+
+        segments.add(_PathSegment(
+          text: parts[i],
+          path: buffer,
+          exists: true,
+          type: i == parts.length - 1 ? 'file' : 'directory',
+        ));
+      }
+
+      if (tablePart != null) {
+        segments.add(_PathSegment(
+          text: tablePart,
+          path: '$localDbPart;$tablePart',
+          exists: true,
+          type: 'banquet_table',
+        ));
+      }
+
+      if (mounted) {
+        setState(() {
+          _cachedSegments = segments;
+          _lastParsedPath = path;
+        });
+      }
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
+      });
+      return;
+    }
+
     try {
       final b = parseBanquet(cleanPath);
       final segments = <_PathSegment>[];
@@ -93,14 +178,16 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
           text: b.columnPath,
           path: fullPath,
           exists: true,
-          type: 'banquet_column', // Added custom type for clarity, though not in original enum
+          type: 'banquet_column',
         ));
       }
 
-      setState(() {
-        _cachedSegments = segments;
-        _lastParsedPath = path;
-      });
+      if (mounted) {
+        setState(() {
+          _cachedSegments = segments;
+          _lastParsedPath = path;
+        });
+      }
 
       // Auto-scroll to end
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -109,7 +196,7 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
         }
       });
     } catch (e) {
-      // Fallback to simple split for local paths
+      // Fallback to simple split for other paths
       final parts = path.split('/').where((s) => s.isNotEmpty).toList();
       final segments = <_PathSegment>[];
       
@@ -124,19 +211,20 @@ class _BreadcrumbPathFieldState extends State<BreadcrumbPathField> {
         segments.add(_PathSegment(
           text: parts[i],
           path: buffer,
-          exists: true, // Assume valid for local paths
+          exists: true,
           type: 'unknown',
         ));
       }
 
-      setState(() {
-        _cachedSegments = segments;
-        _lastParsedPath = path;
-      });
+      if (mounted) {
+        setState(() {
+          _cachedSegments = segments;
+          _lastParsedPath = path;
+        });
+      }
 
       // Auto-scroll to end
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        // Ensure controller is attached before jumping
         if (_scrollController.hasClients) {
           _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         }
@@ -289,15 +377,6 @@ class _PathSegment {
     required this.exists,
     required this.type,
   });
-  
-  factory _PathSegment.fromJson(Map<String, dynamic> json) {
-    return _PathSegment(
-      text: json['text'] ?? '',
-      path: json['path'] ?? '',
-      exists: json['exists'] ?? false,
-      type: json['type'] ?? 'unknown',
-    );
-  }
 }
 
 class _BreadcrumbSegment extends StatefulWidget {

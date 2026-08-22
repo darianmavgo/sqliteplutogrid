@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:pocketbase/pocketbase.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqliter/main.dart';
 import 'package:sqliter/flight_service.dart';
 import 'package:sqliter/db_service.dart';
@@ -110,7 +111,8 @@ class MockDatabaseService extends DatabaseService {
 
 void main() {
   setUpAll(() {
-    // Mock shared preferences if needed
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
   });
 
   group('UI Launch Tests', () {

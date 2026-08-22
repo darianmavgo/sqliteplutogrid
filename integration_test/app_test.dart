@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:macos_ui/macos_ui.dart';
 import 'package:sqliter/main.dart' as app;
 import 'package:sqliter/widgets/database_grid_view.dart';
 
@@ -21,16 +19,13 @@ void main() {
     await tester.pumpAndSettle(const Duration(seconds: 3));
     
     // Check for error view
-    final errorFinder = find.textContaining('Error'); // Simple heuristic for error view title
+    final errorFinder = find.textContaining('Error');
     if (errorFinder.evaluate().isNotEmpty) {
-       print("Found Error View! Dumping details...");
-       // Try to find the error message text
-       final errorMsg = find.byKey(const Key('error_message_text')); // We might need to key this in main.dart
-       // or just dump all text
+       debugPrint("Found Error View! Dumping details...");
        final allText = find.byType(Text);
-       print("All visible text:");
+       debugPrint("All visible text:");
        for (var element in allText.evaluate()) {
-          print((element.widget as Text).data);
+          debugPrint((element.widget as Text).data);
        }
        fail("App showed Error View");
     }

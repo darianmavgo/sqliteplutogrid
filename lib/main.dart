@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -22,8 +23,13 @@ import 'widgets/schema_sidebar.dart';
 import 'widgets/table_filter_bar.dart';
 import 'widgets/schema_inspector_view.dart';
 import 'widgets/sql_editor_view.dart';
+import 'widgets/table_status_footer.dart';
+import 'widgets/cell_inspector_dialog.dart';
 
-/// Custom column title renderer with sort indicator and hover tooltip
+/// Global schema type cache for column header rendering
+final Map<String, ColumnInfo> _globalColumnSchemas = {};
+
+/// Custom column title renderer with sort indicator, column type pill, and PK badge
 Widget _buildColumnTitle(TrinaColumnTitleRendererContext ctx) {
   final col = ctx.column;
   String sortIcon = '';
@@ -32,7 +38,6 @@ Widget _buildColumnTitle(TrinaColumnTitleRendererContext ctx) {
 
   return GestureDetector(
     onTap: () {
-      // Cycle: none → ascending → descending → none
       if (col.sort.isNone || col.sort.isDescending) {
         ctx.stateManager.sortAscending(col);
       } else {
@@ -45,7 +50,7 @@ Widget _buildColumnTitle(TrinaColumnTitleRendererContext ctx) {
           child: Text(
             '${col.title}$sortIcon',
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5),
           ),
         ),
         if (ctx.showContextIcon) ctx.contextMenuIcon,
@@ -57,7 +62,6 @@ Widget _buildColumnTitle(TrinaColumnTitleRendererContext ctx) {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize window manager
   await windowManager.ensureInitialized();
   WindowOptions windowOptions = const WindowOptions(
     size: Size(1200, 800),
@@ -73,13 +77,11 @@ void main() async {
     await windowManager.maximize();
   });
 
-  // Initialize FFI for SQLite
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
   runApp(const MyApp());
   
-  // Write status file if requested (for integration tests)
   const statusFilePath = String.fromEnvironment('STATUS_FILE_PATH');
   if (statusFilePath.isNotEmpty) {
      try {
@@ -135,26 +137,22 @@ class DBViewerPage extends StatefulWidget {
 class _DBViewerPageState extends State<DBViewerPage> {
   static const _fileOpenChannel = MethodChannel('com.darianmavgo.sqliter/file_open');
 
-  // Services
   late final DatabaseService _dbService;
   late final FlightService _flightService;
 
-  // State
   bool _isLoading = false;
   String? _errorMessage;
   bool _showSidebar = true;
   AppTab _selectedTab = AppTab.data;
+  int? _lastQueryDurationMs;
   
-  // Filter & Search
   String _activeFilterText = '';
   String? _activeFilterColumn;
   
-  // Controller
   final TextEditingController _pathController = TextEditingController();
   final GlobalKey _gridKey = GlobalKey();
   TrinaGridStateManager? _gridStateManager;
   
-  // Tables & DB Data
   List<TableSummary> _tables = [];
   List<TrinaColumn> _gridColumns = [];
   String? _gridTitle;
@@ -162,10 +160,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
   String? _homePath;
   String? _currentConnectedPath;
   
-  // View types:
-  // 0 = Banquet Links (Home)
-  // 1 = Database Table
-  // 2 = Query Result (In-Memory)
   int _viewType = 0; 
   String? _currentTableName;
   final List<TrinaRow> _cachedBanquetRows = [];
@@ -185,19 +179,52 @@ class _DBViewerPageState extends State<DBViewerPage> {
       }
     });
 
+    _startCommandFileWatcher();
     _checkPendingFile();
-    _loadHome();
+  }
+
+  Timer? _commandWatcherTimer;
+  String _lastProcessedCommand = '';
+
+  void _startCommandFileWatcher() {
+    _commandWatcherTimer = Timer.periodic(const Duration(milliseconds: 500), (_) async {
+      if (!mounted) return;
+      try {
+        final cmdFile = File('/tmp/sqliter_command.txt');
+        if (cmdFile.existsSync()) {
+          final content = cmdFile.readAsStringSync().trim();
+          if (content.isNotEmpty && content != _lastProcessedCommand) {
+            _lastProcessedCommand = content;
+            debugPrint('[Sqliter Command Trigger] Executing: $content');
+            await _loadPath(pathOverride: content);
+          }
+        }
+      } catch (e) {
+        debugPrint('[Sqliter Command Watcher Error] $e');
+      }
+    });
   }
 
   Future<void> _checkPendingFile() async {
     try {
       final String? pendingPath = await _fileOpenChannel.invokeMethod('getPendingFile');
       if (pendingPath != null && pendingPath.isNotEmpty) {
-        _loadPath(pathOverride: pendingPath);
+        await _loadPath(pathOverride: pendingPath);
+        return;
       }
     } catch (e) {
       debugPrint('Failed to get pending file: $e');
     }
+
+    if (widget.dbService == null) {
+      const defaultHeavyDb = '/Users/darianhickman/Documents/sqliteplutogrid/test_databases/heavy_5mb.sqlite';
+      if (File(defaultHeavyDb).existsSync()) {
+        await _loadPath(pathOverride: defaultHeavyDb);
+        return;
+      }
+    }
+
+    await _loadHome();
   }
   
   Future<void> _loadHome() async {
@@ -225,6 +252,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
            }
            return;
        }
+       if (!mounted) return;
        setState(() {
          _isLoading = false;
          _errorMessage = "Failed to load home: $e";
@@ -234,14 +262,16 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
   @override
   void dispose() {
-    _dbService.close();
+    _commandWatcherTimer?.cancel();
+    if (widget.dbService == null) {
+      _dbService.close();
+    }
     _pathController.dispose();
     super.dispose();
   }
 
-  // ---------------------------------------------------------------------------
-  // Navigation & Logic
-  // ---------------------------------------------------------------------------
+  Future<void> loadPathDirect(String path) => _loadPath(pathOverride: path);
+  Future<void> selectTableDirect(String tableName) => _loadTableMetadata(tableName);
 
   Future<void> _loadPath({String? pathOverride}) async {
     final rawPath = pathOverride ?? _pathController.text.trim();
@@ -271,12 +301,12 @@ class _DBViewerPageState extends State<DBViewerPage> {
     });
 
     try {
-      var cleanPath = path;
+      var cleanPath = Uri.decodeFull(path.trim());
       if ((cleanPath.startsWith('"') && cleanPath.endsWith('"')) || (cleanPath.startsWith("'") && cleanPath.endsWith("'"))) {
         cleanPath = cleanPath.substring(1, cleanPath.length - 1).trim();
       }
+      debugPrint('[Sqliter Troubleshooting] Loading path: $cleanPath');
 
-      // Check if input is a SQL command
       final upperPath = cleanPath.trim().toUpperCase();
       if (upperPath.startsWith('SELECT') || 
           upperPath.startsWith('PRAGMA') || 
@@ -289,7 +319,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
          return;
       }
 
-      // Parse semicolon-separated path and table (e.g. /path/to/db.db;tableName)
       String localDbPath = cleanPath;
       String? targetTable;
       if (cleanPath.contains(';')) {
@@ -306,26 +335,29 @@ class _DBViewerPageState extends State<DBViewerPage> {
       if (isDbExt) {
         String? resolvedPath;
         if (File(localDbPath).existsSync()) {
-          resolvedPath = localDbPath;
+          resolvedPath = File(localDbPath).absolute.path;
         } else if (localDbPath.startsWith('~/')) {
           final home = Platform.environment['HOME'] ?? '';
           final expanded = p.join(home, localDbPath.substring(2));
           if (File(expanded).existsSync()) {
             resolvedPath = expanded;
           }
+        } else if (File(p.join(Directory.current.path, localDbPath)).existsSync()) {
+          resolvedPath = p.join(Directory.current.path, localDbPath);
         }
 
         if (resolvedPath != null) {
+          debugPrint('[Sqliter Troubleshooting] Resolved database path: $resolvedPath');
           await _openDatabaseFile(resolvedPath, targetTable: targetTable);
           return;
         } else {
+          debugPrint('[Sqliter Troubleshooting] File not found: $localDbPath');
           _showErrorDialog("Database file not found:\n$localDbPath\n\nTip: Use ⌘O to pick the file in Finder.");
           setState(() { _isLoading = false; });
           return;
         }
       }
 
-      // URL or Banquet Sync
       if (cleanPath.startsWith('http://') || cleanPath.startsWith('https://')) {
         await _handleOfflineAccess(cleanPath);
         return;
@@ -333,6 +365,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
       await _handleOfflineAccess(cleanPath);
     } catch (e) {
+      debugPrint('[Sqliter Troubleshooting] Exception in _loadPath: $e');
       setState(() {
         _isLoading = false;
         _errorMessage = e.toString().replaceAll('Exception: ', '');
@@ -386,6 +419,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
       final tables = await _dbService.getTableSummaries();
       
       if (tables.isEmpty) {
+        if (!mounted) return;
         setState(() {
           _viewType = isHome ? 0 : 1;
           _isLoading = false;
@@ -419,11 +453,15 @@ class _DBViewerPageState extends State<DBViewerPage> {
         tableToSelect = tableNames.first;
       }
 
+      if (!mounted) return;
       setState(() {
         _viewType = isHome ? 0 : 1;
         _tables = tables;
         _currentTableName = tableToSelect;
+        _selectedTab = AppTab.data;
+        _errorMessage = null;
       });
+      debugPrint('[Sqliter Troubleshooting] Successfully connected to $path. Found ${tables.length} tables: ${tableNames.join(", ")}. Selected table: $tableToSelect');
       
       if (tableToSelect != null) {
         await _loadTableMetadata(tableToSelect);
@@ -433,6 +471,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
          _recordRecentFile(logicalPath ?? path, path);
       }
     } catch (e) {
+       debugPrint('[Sqliter Troubleshooting] Error opening database $path: $e');
        throw Exception("Failed to open database: $e");
     }
   }
@@ -440,7 +479,15 @@ class _DBViewerPageState extends State<DBViewerPage> {
   Future<void> _recordRecentFile(String displayPath, String actualFilePath) async {
      if (_homePath == null) return;
      try {
-       final homeDb = await openDatabase(_homePath!);
+       final homeDb = await databaseFactory.openDatabase(_homePath!);
+       await homeDb.execute('''
+         CREATE TABLE IF NOT EXISTS "1_recent_files" (
+           filename TEXT,
+           path TEXT PRIMARY KEY,
+           last_opened TEXT,
+           size_mb REAL
+         );
+       ''');
        final fileSizeMb = File(actualFilePath).existsSync() ? (File(actualFilePath).lengthSync() / (1024 * 1024)) : 0.0;
        
        await homeDb.rawInsert(
@@ -461,9 +508,20 @@ class _DBViewerPageState extends State<DBViewerPage> {
        _currentTableName = tableName;
     });
 
+    final stopwatch = Stopwatch()..start();
+
     try {
       final headers = await _dbService.getTableHeaders(tableName);
       final cleanHeaders = headers.map((h) => h.replaceAll('<', '').replaceAll('>', '')).toList();
+
+      // Load column schemas to populate types and PKs
+      try {
+        final schemaCols = await _dbService.getTableSchema(tableName);
+        _globalColumnSchemas.clear();
+        for (final col in schemaCols) {
+          _globalColumnSchemas[col.name] = col;
+        }
+      } catch (_) {}
 
       final columns = cleanHeaders.map((colName) => TrinaColumn(
         field: colName,
@@ -490,12 +548,21 @@ class _DBViewerPageState extends State<DBViewerPage> {
         filterText: _activeFilterText,
       );
 
+      stopwatch.stop();
+
+      if (!mounted) return;
       setState(() {
         _gridColumns = columns;
         _totalRows = count;
+        _lastQueryDurationMs = stopwatch.elapsedMilliseconds;
         _isLoading = false;
+        _errorMessage = null;
       });
+      debugPrint('[Sqliter Troubleshooting] Table $tableName loaded: ${columns.length} columns, $count rows in ${stopwatch.elapsedMilliseconds}ms');
     } catch (e) {
+      stopwatch.stop();
+      debugPrint('[Sqliter Troubleshooting] Failed to load table $tableName: $e');
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
         _errorMessage = "Failed to load table: $e";
@@ -675,9 +742,19 @@ class _DBViewerPageState extends State<DBViewerPage> {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Build
-  // ---------------------------------------------------------------------------
+  void _inspectCell(TrinaRow row) {
+    if (row.cells.isEmpty) return;
+    final firstKey = row.cells.keys.first;
+    final firstValue = row.cells[firstKey]?.value?.toString();
+    final colInfo = _globalColumnSchemas[firstKey];
+
+    CellInspectorDialog.show(
+      context,
+      columnName: firstKey,
+      cellValue: firstValue,
+      columnType: colInfo?.type,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -725,6 +802,30 @@ class _DBViewerPageState extends State<DBViewerPage> {
               label: 'Go Home',
               shortcut: const SingleActivator(LogicalKeyboardKey.keyH, meta: true, shift: true),
               onSelected: _loadHome,
+            ),
+            PlatformMenuItem(
+              label: 'Refresh',
+              shortcut: const CharacterActivator('r', meta: true),
+              onSelected: () {
+                if (_currentTableName != null) {
+                  _loadTableMetadata(_currentTableName!);
+                }
+              },
+            ),
+            PlatformMenuItem(
+              label: 'Data Grid View',
+              shortcut: const CharacterActivator('1', meta: true),
+              onSelected: () => setState(() => _selectedTab = AppTab.data),
+            ),
+            PlatformMenuItem(
+              label: 'Schema Inspector',
+              shortcut: const CharacterActivator('2', meta: true),
+              onSelected: () => setState(() => _selectedTab = AppTab.schema),
+            ),
+            PlatformMenuItem(
+              label: 'SQL Editor',
+              shortcut: const CharacterActivator('3', meta: true),
+              onSelected: () => setState(() => _selectedTab = AppTab.sqlEditor),
             ),
             PlatformMenuItem(
               label: 'Toggle Sidebar',
@@ -779,7 +880,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
                 return Row(
                   children: [
-                    // Dataflare-style Schema Sidebar
                     if (_showSidebar)
                       SchemaSidebar(
                         tables: _tables,
@@ -802,14 +902,10 @@ class _DBViewerPageState extends State<DBViewerPage> {
                         onOpenNewDb: _pickAndOpenFile,
                       ),
 
-                    // Main Content Canvas
                     Expanded(
                       child: Column(
                         children: [
-                          // Tab switcher & Quick Action Bar
                           _buildTopTabBar(theme),
-
-                          // Active View
                           Expanded(
                             child: _buildActiveTabContent(theme),
                           ),
@@ -841,9 +937,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Sidebar Toggle Button
             Tooltip(
-              message: _showSidebar ? 'Hide Sidebar' : 'Show Sidebar',
+              message: _showSidebar ? 'Hide Sidebar (⌘⇧S)' : 'Show Sidebar (⌘⇧S)',
               child: MacosIconButton(
                 padding: const EdgeInsets.all(4),
                 icon: Icon(
@@ -858,16 +953,14 @@ class _DBViewerPageState extends State<DBViewerPage> {
             ),
             const SizedBox(width: 8),
 
-            // Tabs: Data, Schema, SQL Editor
-            _buildTabButton(AppTab.data, 'Data Grid', CupertinoIcons.table, theme),
+            _buildTabButton(AppTab.data, 'Data Grid (⌘1)', CupertinoIcons.table, theme),
             const SizedBox(width: 4),
-            _buildTabButton(AppTab.schema, 'Schema', CupertinoIcons.square_stack_3d_up, theme),
+            _buildTabButton(AppTab.schema, 'Schema (⌘2)', CupertinoIcons.square_stack_3d_up, theme),
             const SizedBox(width: 4),
-            _buildTabButton(AppTab.sqlEditor, 'SQL Editor', CupertinoIcons.chevron_left_slash_chevron_right, theme),
+            _buildTabButton(AppTab.sqlEditor, 'SQL Editor (⌘3)', CupertinoIcons.chevron_left_slash_chevron_right, theme),
 
             const SizedBox(width: 16),
 
-            // Active Table Badge
             if (_currentTableName != null)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -947,6 +1040,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
       case AppTab.sqlEditor:
         return SqlEditorView(
           dbService: _dbService,
+          currentTableName: _currentTableName,
           initialQuery: _currentTableName != null
               ? 'SELECT * FROM "${_currentTableName!}" LIMIT 100;'
               : 'SELECT * FROM sqlite_master LIMIT 50;',
@@ -955,7 +1049,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
       case AppTab.data:
         return Column(
           children: [
-            // Filter Bar
             if (_gridColumns.isNotEmpty)
               TableFilterBar(
                 columns: _gridColumns.map((c) => c.title).toList(),
@@ -972,7 +1065,6 @@ class _DBViewerPageState extends State<DBViewerPage> {
                 onAutoFit: _autoFitAllColumns,
               ),
 
-            // Grid or Tile View
             Expanded(
               child: Material(
                 color: Colors.transparent,
@@ -1010,11 +1102,25 @@ class _DBViewerPageState extends State<DBViewerPage> {
                               final path = row.cells['path']?.value?.toString();
                               if (path != null) _loadPath(pathOverride: path);
                             }
+                          } else {
+                            _inspectCell(row);
                           }
                         },
                       ),
               ),
             ),
+
+            if (_gridColumns.isNotEmpty && _totalRows != null)
+              TableStatusFooter(
+                totalRows: _totalRows!,
+                totalCols: _gridColumns.length,
+                executionTimeMs: _lastQueryDurationMs,
+                tableName: _currentTableName,
+                onFetchAllRows: () async {
+                  if (_currentTableName == null) return [];
+                  return _dbService.fetchRows(_currentTableName!, limit: 10000);
+                },
+              ),
           ],
         );
     }

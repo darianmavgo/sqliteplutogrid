@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqliter/flight_service.dart';
@@ -21,7 +22,7 @@ void main() {
     
     // addTearDown(() => outputDir.deleteSync(recursive: true)); // Disabled as requested
     
-    print('Testing with output dir: ${outputDir.path}');
+    debugPrint('Testing with output dir: ${outputDir.path}');
 
     // 2. Initialize Service with override
     // Note: We need to ensure we run this test in a way that respects Platform.isMacOS 
