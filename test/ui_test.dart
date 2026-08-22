@@ -49,7 +49,7 @@ class MockFlightService extends FlightService {
   Future<String> getHomeDatabasePath() async => '/tmp/home.sqlite';
 }
 
-class MockDatabaseService implements DatabaseService {
+class MockDatabaseService extends DatabaseService {
   @override
   Future<void> close() async {}
 
@@ -57,10 +57,18 @@ class MockDatabaseService implements DatabaseService {
   Future<void> connect(String path) async {}
 
   @override
-  Future<int> countRows(String tableName) async => 0;
+  Future<int> countRows(String tableName, {String? filterColumn, String? filterText}) async => 0;
 
   @override
-  Future<List<Map<String, Object?>>> fetchRows(String tableName, {int limit = 100, int offset = 0}) async => [];
+  Future<List<Map<String, Object?>>> fetchRows(
+    String tableName, {
+    int limit = 100,
+    int offset = 0,
+    String? filterColumn,
+    String? filterText,
+    String? sortColumn,
+    bool sortAscending = true,
+  }) async => [];
 
   @override
   Future<List<String>> getTableHeaders(String tableName) async => ['id', 'name'];
@@ -69,15 +77,30 @@ class MockDatabaseService implements DatabaseService {
   Future<List<String>> getTables() async => ['Banquet Links', 'posts'];
 
   @override
+  Future<List<TableSummary>> getTableSummaries() async => [
+    const TableSummary(name: 'Banquet Links', type: 'table', rowCount: 0),
+    const TableSummary(name: 'posts', type: 'table', rowCount: 0),
+  ];
+
+  @override
+  Future<List<ColumnInfo>> getTableSchema(String tableName) async => [
+    const ColumnInfo(cid: 0, name: 'id', type: 'INTEGER', notNull: true, isPk: true),
+    const ColumnInfo(cid: 1, name: 'name', type: 'TEXT', notNull: false, isPk: false),
+  ];
+
+  @override
+  Future<List<IndexInfo>> getTableIndexes(String tableName) async => [];
+
+  @override
+  Future<String?> getTableDDL(String tableName) async => 'CREATE TABLE $tableName (id INTEGER, name TEXT);';
+
+  @override
   Stream<List<Map<String, Object?>>> streamRows(String tableName, {int chunkSize = 100}) async* {
     yield [];
   }
 
   @override
   Future<int> getUserVersion() async => 0;
-
-  @override
-  Future<List<Map<String, Object?>>> fetchPower2Samples(String tableName) async => [];
 
   @override
   Future<List<Map<String, Object?>>> executeQuery(String sql) async => [];
@@ -92,6 +115,10 @@ void main() {
 
   group('UI Launch Tests', () {
     testWidgets('App Launches with correct services', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
       await tester.pumpWidget(MacosApp(
         home: DBViewerPage(
           flightService: MockFlightService(),
@@ -108,6 +135,10 @@ void main() {
   
   group('Client Side Actions', () {
      testWidgets('Toolbar navigation input update', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
       await tester.pumpWidget(MacosApp(
         home: DBViewerPage(
             flightService: MockFlightService(),

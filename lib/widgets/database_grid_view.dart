@@ -11,6 +11,7 @@ class DatabaseGridView extends StatefulWidget {
   final Function(TrinaRow)? onRowDoubleTap;
   /// Called when a cell value looks like a URL or sqlite path.
   final Function(String value)? onCellNavigate;
+  final ValueChanged<TrinaGridStateManager>? onStateManagerCreated;
 
   const DatabaseGridView({
     super.key,
@@ -20,6 +21,7 @@ class DatabaseGridView extends StatefulWidget {
     required this.onFetchRows,
     this.onRowDoubleTap,
     this.onCellNavigate,
+    this.onStateManagerCreated,
   });
 
   @override
@@ -33,7 +35,7 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
   /// Auto-fit every column based on rendered content.
   void _autoFitAllColumns() {
     final sm = _stateManager;
-    if (sm == null) return;
+    if (sm == null || !mounted) return;
     for (final col in sm.columns) {
       sm.autoFitColumn(context, col);
     }
@@ -54,14 +56,25 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
       return const Center(child: Text("No Table Selected"));
     }
 
+    if (widget.columns.isEmpty) {
+      return Center(
+        child: Text(
+          "Table '${widget.tableName}' has no columns or is empty.",
+          style: MacosTheme.of(context).typography.body,
+        ),
+      );
+    }
+
     final config = SqliterTheme.getGridConfig(context);
 
     return TrinaGrid(
       key: ValueKey(widget.tableName),
       columns: widget.columns,
+      // ignore: prefer_const_literals_to_create_immutables
       rows: [],
       onLoaded: (event) {
         _stateManager = event.stateManager;
+        widget.onStateManagerCreated?.call(event.stateManager);
         _hasAutoSized = false;
       },
       onRowDoubleTap: (event) {
@@ -72,6 +85,7 @@ class _DatabaseGridViewState extends State<DatabaseGridView> {
       configuration: config,
       createFooter: (stateManager) {
         _stateManager = stateManager;
+        widget.onStateManagerCreated?.call(stateManager);
         return TrinaLazyPagination(
           stateManager: stateManager,
           initialPage: 1,

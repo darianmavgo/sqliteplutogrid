@@ -39,7 +39,6 @@ class MockFlightService extends FlightService {
 }
 
 class MockDatabaseService extends DatabaseService {
-  // Use no-arg constructor if base allows, or pass dummy
   MockDatabaseService() : super();
   
   @override
@@ -49,25 +48,46 @@ class MockDatabaseService extends DatabaseService {
   Future<List<String>> getTables() async => ['Table1', 'Table2'];
 
   @override
+  Future<List<TableSummary>> getTableSummaries() async => [
+    const TableSummary(name: 'Table1', type: 'table', rowCount: 10),
+    const TableSummary(name: 'Table2', type: 'table', rowCount: 5),
+  ];
+
+  @override
+  Future<List<ColumnInfo>> getTableSchema(String tableName) async => [
+    const ColumnInfo(cid: 0, name: 'id', type: 'INTEGER', notNull: true, isPk: true),
+    const ColumnInfo(cid: 1, name: 'name', type: 'TEXT', notNull: false, isPk: false),
+    const ColumnInfo(cid: 2, name: 'value', type: 'TEXT', notNull: false, isPk: false),
+  ];
+
+  @override
+  Future<List<IndexInfo>> getTableIndexes(String tableName) async => [];
+
+  @override
+  Future<String?> getTableDDL(String tableName) async => 'CREATE TABLE $tableName (id INTEGER PRIMARY KEY, name TEXT, value TEXT);';
+
+  @override
   Future<List<String>> getTableHeaders(String tableName) async => ['id', 'name', 'value'];
 
-  // Needs to match `Future<int> countRows(String t)`
   @override
-  Future<int> countRows(String t) async => 10;
+  Future<int> countRows(String t, {String? filterColumn, String? filterText}) async => 10;
   
-  // Needs to match `Future<List<Map<String, Object?>>> fetchRows(...)`
   @override
-  Future<List<Map<String, Object?>>> fetchRows(String t, {int limit = 100, int offset = 0}) async {
+  Future<List<Map<String, Object?>>> fetchRows(
+    String t, {
+    int limit = 100,
+    int offset = 0,
+    String? filterColumn,
+    String? filterText,
+    String? sortColumn,
+    bool sortAscending = true,
+  }) async {
     return List.generate(5, (i) => {'id': i, 'name': 'Row $i', 'value': 100 + i});
   }
 
   @override
   Future<int> getUserVersion() async => 0;
-
-  @override
-  Future<List<Map<String, Object?>>> fetchPower2Samples(String tableName) async => [];
   
-  // Missing override for executeQuery from previous interface changes?
   @override
   Future<List<Map<String, Object?>>> executeQuery(String sql) async => [];
 

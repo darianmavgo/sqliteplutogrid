@@ -4,14 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:trina_grid/trina_grid.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-// ignore: depend_on_referenced_packages
-// import 'package:pocketbase/pocketbase.dart'; 
 import 'package:macos_ui/macos_ui.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
-import 'package:banquet/banquet.dart';
 
 import 'db_service.dart';
 import 'flight_service.dart';
@@ -21,14 +18,17 @@ import 'utils/cell_link_renderer.dart';
 import 'widgets/banquet_bar.dart';
 import 'widgets/database_grid_view.dart';
 import 'widgets/tile_view.dart';
+import 'widgets/schema_sidebar.dart';
+import 'widgets/table_filter_bar.dart';
+import 'widgets/schema_inspector_view.dart';
+import 'widgets/sql_editor_view.dart';
 
-/// Custom column title renderer that replaces the default sort icons
-/// with "+" (ascending) and "-" (descending).
+/// Custom column title renderer with sort indicator and hover tooltip
 Widget _buildColumnTitle(TrinaColumnTitleRendererContext ctx) {
   final col = ctx.column;
   String sortIcon = '';
-  if (col.sort.isAscending) sortIcon = ' +';
-  if (col.sort.isDescending) sortIcon = ' -';
+  if (col.sort.isAscending) sortIcon = ' ↑';
+  if (col.sort.isDescending) sortIcon = ' ↓';
 
   return GestureDetector(
     onTap: () {
@@ -85,7 +85,6 @@ void main() async {
      try {
        await File(statusFilePath).writeAsString('Window Initialized at ${DateTime.now()}');
      } catch (e) {
-       // Ignore errors writing to tmp
        debugPrint('Failed to write status file: $e');
      }
   }
@@ -97,17 +96,15 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MacosApp(
-      title: '🍊',
+      title: '🍊 Sqliter',
       themeMode: ThemeMode.dark,
       darkTheme: MacosThemeData.dark(),
       theme: MacosThemeData.dark(),
       debugShowCheckedModeBanner: false,
       home: Builder(
         builder: (context) {
-          // Use a builder to get the correct context for MediaQuery
           final data = MediaQuery.of(context);
           return MediaQuery(
-            // Cap the scaling to prevent layout breakage on very large text settings
             data: data.copyWith(
               textScaler: data.textScaler.clamp(minScaleFactor: 1.0, maxScaleFactor: 1.5),
             ),
@@ -118,6 +115,8 @@ class MyApp extends StatelessWidget {
     );
   }
 }
+
+enum AppTab { data, schema, sqlEditor }
 
 class DBViewerPage extends StatefulWidget {
   final FlightService? flightService;
@@ -143,40 +142,42 @@ class _DBViewerPageState extends State<DBViewerPage> {
   // State
   bool _isLoading = false;
   String? _errorMessage;
+  bool _showSidebar = true;
+  AppTab _selectedTab = AppTab.data;
+  
+  // Filter & Search
+  String _activeFilterText = '';
+  String? _activeFilterColumn;
   
   // Controller
   final TextEditingController _pathController = TextEditingController();
-
-  // Data
-  final GlobalKey _gridKey = GlobalKey(); // To trigger grid reloads
+  final GlobalKey _gridKey = GlobalKey();
+  TrinaGridStateManager? _gridStateManager;
   
-  // Unified Grid Data State
+  // Tables & DB Data
+  List<TableSummary> _tables = [];
   List<TrinaColumn> _gridColumns = [];
   String? _gridTitle;
   int? _totalRows;
-  String? _homePath; // Cache home path
+  String? _homePath;
+  String? _currentConnectedPath;
   
-  // We need to keep track of what we are viewing to fetch correct rows
-  // 0 = Banquet Links (Default home)
+  // View types:
+  // 0 = Banquet Links (Home)
   // 1 = Database Table
   // 2 = Query Result (In-Memory)
   int _viewType = 0; 
-  String? _currentTableName; // For DB view
-  List<TrinaRow> _cachedBanquetRows = []; // For Query view
-  bool _tileMode = false; // When true, show TileView instead of Grid
+  String? _currentTableName;
+  final List<TrinaRow> _cachedBanquetRows = [];
+  bool _tileMode = false;
 
   @override
   void initState() {
     super.initState();
     
-    // Initialize services
     _flightService = widget.flightService ?? FlightService();
     _dbService = widget.dbService ?? DatabaseService();
     
-    // Perform async initialization
-    _initServices();
-    
-    // Listen for file open events
     _fileOpenChannel.setMethodCallHandler((call) async {
       if (call.method == 'onFileOpened') {
         final String path = call.arguments;
@@ -184,10 +185,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
       }
     });
 
-    // Check for pending files
     _checkPendingFile();
-    
-    // Initial checks - Load Home DB
     _loadHome();
   }
 
@@ -201,35 +199,28 @@ class _DBViewerPageState extends State<DBViewerPage> {
       debugPrint('Failed to get pending file: $e');
     }
   }
-
-  Future<void> _initServices() async {
-    // Initialize services if needed
-  }
   
   Future<void> _loadHome() async {
-     // Reset title
-     windowManager.setTitle('🍊');
+     windowManager.setTitle('🍊 Sqliter');
      setState(() {
        _isLoading = true;
        _errorMessage = null;
-       _viewType = 0; // Home Mode
-       _tileMode = false; // Always grid on home
+       _viewType = 0;
+       _tileMode = false;
+       _selectedTab = AppTab.data;
+       _activeFilterText = '';
+       _activeFilterColumn = null;
        _pathController.clear();
      });
      
      try {
-       // 1. Get path to home.sqlite from server
        final homePath = await _flightService.getHomeDatabasePath();
        _homePath = homePath;
-       
-       // 2. Open it as a database
        await _openDatabaseFile(homePath, isHome: true);
-       
      } catch (e) {
        if (e.toString().contains("Home database was empty")) {
            debugPrint("Retrying home load after repair...");
-           // ignore: use_build_context_synchronously
-           if (context.mounted) {
+           if (mounted) {
               Future.delayed(const Duration(milliseconds: 500), () => _loadHome());
            }
            return;
@@ -256,11 +247,9 @@ class _DBViewerPageState extends State<DBViewerPage> {
     final rawPath = pathOverride ?? _pathController.text.trim();
     if (rawPath.isEmpty) return;
 
-    // Detect and strip #tile keyword
     final hasTile = rawPath.contains('#tile');
     final path = rawPath.replaceAll('#tile', '').trim();
 
-    // Keep #tile in the URL bar so breadcrumb shows the chip
     final displayPath = hasTile ? '$path#tile' : path;
     if (pathOverride != null) {
       _pathController.text = displayPath;
@@ -268,11 +257,12 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
     setState(() {
       _tileMode = hasTile;
+      _activeFilterText = '';
+      _activeFilterColumn = null;
     });
 
     if (path.isEmpty) return;
     
-    // Update controller if override used, to reflect current path in UI
     windowManager.setTitle('🍊 $path');
 
     setState(() {
@@ -281,90 +271,97 @@ class _DBViewerPageState extends State<DBViewerPage> {
     });
 
     try {
-      // Check if input is a SQL command (basic heuristic)
-      final upperPath = path.trim().toUpperCase();
+      var cleanPath = path;
+      if ((cleanPath.startsWith('"') && cleanPath.endsWith('"')) || (cleanPath.startsWith("'") && cleanPath.endsWith("'"))) {
+        cleanPath = cleanPath.substring(1, cleanPath.length - 1).trim();
+      }
+
+      // Check if input is a SQL command
+      final upperPath = cleanPath.trim().toUpperCase();
       if (upperPath.startsWith('SELECT') || 
           upperPath.startsWith('PRAGMA') || 
           upperPath.startsWith('WITH') ||
           upperPath.startsWith('EXPLAIN')) {
-         await _executeQuery(path);
+         setState(() {
+           _selectedTab = AppTab.sqlEditor;
+           _isLoading = false;
+         });
          return;
       }
 
-      // First try local if it's a known database extension
-      if (path.endsWith('.db') || path.endsWith('.sqlite')) {
-        final type = await FileSystemEntity.type(path);
-        if (type != FileSystemEntityType.notFound) {
-          await _openDatabaseFile(path);
+      // Parse semicolon-separated path and table (e.g. /path/to/db.db;tableName)
+      String localDbPath = cleanPath;
+      String? targetTable;
+      if (cleanPath.contains(';')) {
+        final parts = cleanPath.split(';');
+        localDbPath = parts[0].trim();
+        if (parts.length > 1 && parts[1].trim().isNotEmpty) {
+          targetTable = parts[1].trim();
+        }
+      }
+
+      final lowerPath = localDbPath.toLowerCase();
+      final isDbExt = lowerPath.endsWith('.db') || lowerPath.endsWith('.sqlite') || lowerPath.endsWith('.sqlite3');
+
+      if (isDbExt) {
+        String? resolvedPath;
+        if (File(localDbPath).existsSync()) {
+          resolvedPath = localDbPath;
+        } else if (localDbPath.startsWith('~/')) {
+          final home = Platform.environment['HOME'] ?? '';
+          final expanded = p.join(home, localDbPath.substring(2));
+          if (File(expanded).existsSync()) {
+            resolvedPath = expanded;
+          }
+        }
+
+        if (resolvedPath != null) {
+          await _openDatabaseFile(resolvedPath, targetTable: targetTable);
+          return;
+        } else {
+          _showErrorDialog("Database file not found:\n$localDbPath\n\nTip: Use ⌘O to pick the file in Finder.");
+          setState(() { _isLoading = false; });
           return;
         }
       }
 
-      // Otherwise, use Banquet Sync (Flight3 server)
-      await _handleOfflineAccess(path);
+      // URL or Banquet Sync
+      if (cleanPath.startsWith('http://') || cleanPath.startsWith('https://')) {
+        await _handleOfflineAccess(cleanPath);
+        return;
+      }
+
+      await _handleOfflineAccess(cleanPath);
     } catch (e) {
       setState(() {
         _isLoading = false;
-        _errorMessage = e.toString();
+        _errorMessage = e.toString().replaceAll('Exception: ', '');
       });
     }
   }
 
-  Future<void> _executeQuery(String sql) async {
-    // Determine target DB
-    // If we are in "Home" mode, we might want to run against home.sqlite?
-    // User requested "Command Palette backend", so maybe.
-    // If in "Data" mode, run against current DB.
-    
-    // We already have a connected DB in _dbService (either Home or Data).
-    // So just run it.
-    
-    setState(() {
-       _isLoading = true;
-       _gridTitle = "Query Result";
-    });
-    
-    try {
-       final results = await _dbService.executeQuery(sql);
-       
-       if (results.isEmpty) {
-          setState(() {
-             _gridColumns = [TrinaColumn(field: 'info', title: 'Info', width: 300, type: TrinaColumnType.text(), enableFilterMenuItem: false, enableContextMenu: false)];
-             _totalRows = 0;
-             _isLoading = false;
-             _errorMessage = "Query returned no results.";
-          });
-       } else {
-          _optimizeColumns("Query", results);
-          
-          // For ad-hoc queries, we serve from memory (results)
-          // We need to override _fetchRows to serve this static list
-          setState(() {
-             _viewType = 2; // Query Mode
-             _cachedBanquetRows = results.map((row) {
-                 final cells = <String, TrinaCell>{};
-                 row.forEach((key, value) {
-                    cells[key] = TrinaCell(value: value?.toString() ?? '');
-                 });
-                 return TrinaRow(cells: cells);
-             }).toList();
-             _totalRows = results.length;
-             _isLoading = false;
-          });
-       }
-    } catch (e) {
-       setState(() {
-          _isLoading = false;
-          _errorMessage = "Query failed: $e";
-       });
-    }
+  void _showErrorDialog(String message) {
+    if (!mounted) return;
+    showMacosAlertDialog(
+      context: context,
+      builder: (_) => MacosAlertDialog(
+        appIcon: const Text('🍊', style: TextStyle(fontSize: 32)),
+        title: const Text('Notice'),
+        message: Text(message),
+        primaryButton: PushButton(
+          controlSize: ControlSize.large,
+          child: const Text('OK'),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
   }
 
   Future<void> _pickAndOpenFile() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['db', 'sqlite'],
+        allowedExtensions: ['db', 'sqlite', 'sqlite3'],
       );
 
       if (result != null && result.files.single.path != null) {
@@ -377,44 +374,59 @@ class _DBViewerPageState extends State<DBViewerPage> {
     }
   }
 
-  Future<void> _openDatabaseFile(String path, {bool isHome = false, String? logicalPath}) async {
-    // Only open .db and .sqlite files
-    if (!path.endsWith('.db') && !path.endsWith('.sqlite')) {
-       throw Exception("Only .db and .sqlite files are supported for local opening.");
+  Future<void> _openDatabaseFile(String path, {bool isHome = false, String? logicalPath, String? targetTable}) async {
+    final lowerPath = path.toLowerCase();
+    if (!lowerPath.endsWith('.db') && !lowerPath.endsWith('.sqlite') && !lowerPath.endsWith('.sqlite3')) {
+       throw Exception("Only .db, .sqlite, and .sqlite3 files are supported for local opening.");
     }
     try {
       await _dbService.connect(path);
+      _currentConnectedPath = path;
       
-      final tables = await _dbService.getTables();
+      final tables = await _dbService.getTableSummaries();
       
-      if (tables.isEmpty && isHome) {
-          debugPrint("Home database is empty.");
-          // Do not delete. We will attempt to regenerate/fill it if needed, or just show empty.
+      if (tables.isEmpty) {
+        setState(() {
+          _viewType = isHome ? 0 : 1;
+          _isLoading = false;
+          _currentTableName = null;
+          _tables = [];
+          _gridTitle = p.basename(path);
+          _gridColumns = [];
+          _totalRows = 0;
+          _errorMessage = "Database '${p.basename(path)}' opened, but contains no tables.";
+        });
+        if (!isHome) {
+          _recordRecentFile(logicalPath ?? path, path);
+        }
+        return;
       }
 
+      String? tableToSelect;
+      final tableNames = tables.map((t) => t.name).toList();
+
+      if (targetTable != null && tableNames.contains(targetTable)) {
+        tableToSelect = targetTable;
+      } else if (isHome) {
+        if (tableNames.contains("0_quick_links")) {
+          tableToSelect = "0_quick_links";
+        } else if (tableNames.contains("2_banquet_links")) {
+          tableToSelect = "2_banquet_links";
+        } else if (tableNames.isNotEmpty) {
+          tableToSelect = tableNames.first;
+        }
+      } else {
+        tableToSelect = tableNames.first;
+      }
 
       setState(() {
         _viewType = isHome ? 0 : 1;
-        _isLoading = false;
-        // For Home, prefer "2_banquet_links" or "0_quick_links"
-        if (isHome) {
-            // Prioritize Quick Links (0) so users can see actions [Open, Connect]
-            if (tables.contains("0_quick_links")) {
-                _currentTableName = "0_quick_links";
-            } else if (tables.contains("2_banquet_links")) {
-                _currentTableName = "2_banquet_links";
-            } else if (tables.isNotEmpty) {
-                 _currentTableName = tables.first;
-            }
-        } else {
-            if (tables.isNotEmpty) {
-               _currentTableName = tables.first;
-            }
-        }
+        _tables = tables;
+        _currentTableName = tableToSelect;
       });
       
-      if (_currentTableName != null) {
-        await _loadTableMetadata(_currentTableName!);
+      if (tableToSelect != null) {
+        await _loadTableMetadata(tableToSelect);
       }
       
       if (!isHome) {
@@ -428,18 +440,13 @@ class _DBViewerPageState extends State<DBViewerPage> {
   Future<void> _recordRecentFile(String displayPath, String actualFilePath) async {
      if (_homePath == null) return;
      try {
-       // Open home db temporarily
-       // We use a separate connection to avoid messing with the main view
        final homeDb = await openDatabase(_homePath!);
-       
        final fileSizeMb = File(actualFilePath).existsSync() ? (File(actualFilePath).lengthSync() / (1024 * 1024)) : 0.0;
        
-       await homeDb.insert('1_recent_files', {
-          'filename': p.basename(displayPath),
-          'path': displayPath,
-          'last_opened': DateTime.now().toIso8601String(),
-          'size_mb': fileSizeMb
-       }, conflictAlgorithm: ConflictAlgorithm.replace);
+       await homeDb.rawInsert(
+         'INSERT OR REPLACE INTO "1_recent_files" (filename, path, last_opened, size_mb) VALUES (?, ?, ?, ?)',
+         [p.basename(displayPath), displayPath, DateTime.now().toIso8601String(), fileSizeMb],
+       );
        
        await homeDb.close();
      } catch (e) {
@@ -451,15 +458,17 @@ class _DBViewerPageState extends State<DBViewerPage> {
     setState(() {
        _isLoading = true;
        _gridTitle = tableName;
+       _currentTableName = tableName;
     });
 
     try {
-      // Get columns
-      final result = await _dbService.getTableHeaders(tableName);
-      final columns = result.map((colName) => TrinaColumn(
+      final headers = await _dbService.getTableHeaders(tableName);
+      final cleanHeaders = headers.map((h) => h.replaceAll('<', '').replaceAll('>', '')).toList();
+
+      final columns = cleanHeaders.map((colName) => TrinaColumn(
         field: colName,
         title: colName,
-        width: 100,
+        width: 120,
         type: TrinaColumnType.text(),
         enableSorting: true,
         enableFilterMenuItem: false,
@@ -475,8 +484,11 @@ class _DBViewerPageState extends State<DBViewerPage> {
         },
       )).toList();
 
-      // Get count
-      final count = await _dbService.countRows(tableName);
+      final count = await _dbService.countRows(
+        tableName,
+        filterColumn: _activeFilterColumn,
+        filterText: _activeFilterText,
+      );
 
       setState(() {
         _gridColumns = columns;
@@ -493,11 +505,9 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
   Future<List<TrinaRow>> _fetchRows(int offset) async {
     if (_viewType == 2) {
-       // Query Mode (In-Memory)
        if (offset >= _cachedBanquetRows.length) return [];
        return _cachedBanquetRows.skip(offset).take(100).toList();
     }
-    // Always fetch from DB now for Home (0) and Data (1)
     return _fetchDatabaseRows(offset);
   }
 
@@ -505,9 +515,14 @@ class _DBViewerPageState extends State<DBViewerPage> {
     if (_currentTableName == null) return [];
     
     try {
-      final rowsData = await _dbService.fetchRows(_currentTableName!, limit: 200, offset: offset);
+      final rowsData = await _dbService.fetchRows(
+        _currentTableName!,
+        limit: 200,
+        offset: offset,
+        filterColumn: _activeFilterColumn,
+        filterText: _activeFilterText,
+      );
       
-      // If this is the initial load (offset 0), we can optimize columns
       if (offset == 0 && rowsData.isNotEmpty) {
         _optimizeColumns(_currentTableName!, rowsData);
       }
@@ -526,12 +541,13 @@ class _DBViewerPageState extends State<DBViewerPage> {
             displayValue = Formatters.formatTime(value);
           }
           
-          cells[key] = TrinaCell(value: displayValue);
+          final cleanKey = key.replaceAll('<', '').replaceAll('>', '');
+          cells[cleanKey] = TrinaCell(value: displayValue);
         });
         return TrinaRow(cells: cells);
       }).toList();
     } catch (e) {
-      debugPrint('[FlightService] ERROR: $e');
+      debugPrint('[DatabaseService] ERROR: $e');
       return [];
     }
   }
@@ -551,24 +567,23 @@ class _DBViewerPageState extends State<DBViewerPage> {
         if (value != null && value.toString().isNotEmpty) {
           isAllNull = false;
           final valStr = value.toString();
-          // Rough estimation of width (8.5px per char + padding)
           lengths.add(valStr.length * 8.5 + 0.0); 
         }
       }
 
       if (!isAllNull) {
         lengths.sort();
-        // Use 98% percentile for "tight fit"
         final index = (lengths.length * 0.98).floor();
         double maxWidth = index < lengths.length ? lengths[index] : (lengths.isNotEmpty ? lengths.last : 100.0);
         
-        // Ensure some minimums/maximums
         if (maxWidth < 100) maxWidth = 100;
         if (maxWidth > 600) maxWidth = 600;
         
+        final cleanKey = key.replaceAll('<', '').replaceAll('>', '');
+
         optimizedColumns.add(TrinaColumn(
-          field: key,
-          title: key,
+          field: cleanKey,
+          title: cleanKey,
           width: maxWidth,
           type: TrinaColumnType.text(),
           enableSorting: true,
@@ -605,10 +620,9 @@ class _DBViewerPageState extends State<DBViewerPage> {
       windowManager.setTitle('🍊 $banquetPath');
       await _openDatabaseFile(serverPath, logicalPath: banquetPath);
     } catch (e) {
-      debugPrint("Flight3 sync failed: $e. Falling back to native picker.");
+      debugPrint("Banquet sync fallback to picker: $e");
       
       try {
-        // Fallback: If server fails, try to open as a local folder using native picker
         String initialDir = banquetPath;
         if (initialDir.startsWith('~')) {
           String? home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
@@ -619,27 +633,21 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
         final result = await FilePicker.platform.pickFiles(
           type: FileType.custom,
-          allowedExtensions: ['db', 'sqlite'],
+          allowedExtensions: ['db', 'sqlite', 'sqlite3'],
           initialDirectory: initialDir,
-          dialogTitle: 'Select a Database in $banquetPath',
+          dialogTitle: 'Select a Database',
         );
 
         if (result != null && result.files.single.path != null) {
-          // User picked a file, open it
           final pickedPath = result.files.single.path!;
-          _pathController.text = pickedPath; // Update URL bar
+          _pathController.text = pickedPath;
           windowManager.setTitle('🍊 $pickedPath');
           await _openDatabaseFile(pickedPath);
           return;
         } else {
-          // User cancelled picker
-          setState(() {
-             _isLoading = false;
-             // We don't show an error if they just cancelled the "folder view"
-          });
+          setState(() { _isLoading = false; });
         }
       } catch (pickerError) {
-         // If picker also fails (e.g. invalid path for initialDirectory), show original error
           setState(() {
             _isLoading = false;
             _errorMessage = "Sync failed: $e\nFallback failed: $pickerError";
@@ -648,63 +656,22 @@ class _DBViewerPageState extends State<DBViewerPage> {
     }
   }
 
-  PlatformMenu _buildPathMenu(String fullPath) {
-    if (fullPath.isEmpty) return const PlatformMenu(label: '🍊', menus: []);
+  void _onFilterChanged(({String? column, String text}) filter) async {
+    setState(() {
+      _activeFilterColumn = filter.column;
+      _activeFilterText = filter.text;
+    });
+    if (_currentTableName != null) {
+      await _loadTableMetadata(_currentTableName!);
+    }
+  }
 
-    try {
-      final b = parseBanquet(fullPath);
-      final List<String> paths = [];
-
-      // Add segments based on banquet structure
-      if (b.dataSetPath.isNotEmpty) {
-        paths.add(b.dataSetPath);
+  void _autoFitAllColumns() {
+    final sm = _gridStateManager;
+    if (sm != null && mounted) {
+      for (final col in sm.columns) {
+        sm.autoFitColumn(context, col);
       }
-      if (b.table.isNotEmpty) {
-        paths.add('${b.dataSetPath};${b.table}');
-      }
-      if (b.columnPath.isNotEmpty && b.table.isNotEmpty) {
-        paths.add('${b.dataSetPath};${b.table};${b.columnPath}');
-      } else if (b.columnPath.isNotEmpty) {
-        // Flat dataset with column path
-        paths.add('${b.dataSetPath};;${b.columnPath}');
-      }
-
-      // If no paths found (maybe it's just a raw path), fallback to simple split
-      if (paths.isEmpty) {
-        List<String> rawSegments = fullPath.split('/').where((s) => s.isNotEmpty).toList();
-        String current = fullPath.startsWith('/') ? '/' : '';
-        for (int i = 0; i < rawSegments.length; i++) {
-          if (i > 0 || (current != '/' && current.isNotEmpty)) current += '/';
-          current += rawSegments[i];
-          paths.add(current);
-        }
-      }
-
-      // Reverse (longest to shortest) and cap at 10
-      List<String> sortedPaths = paths.reversed.take(10).toList();
-
-      return PlatformMenu(
-        label: fullPath,
-        menus: sortedPaths.map((p) => PlatformMenuItem(
-          label: p,
-          onSelected: () {
-            _pathController.text = p;
-            _loadPath();
-          },
-        )).toList(),
-      );
-    } catch (e) {
-      debugPrint("Error building path menu with banquet: $e");
-      // Fallback to minimal menu
-      return PlatformMenu(
-        label: fullPath,
-        menus: [
-          PlatformMenuItem(
-            label: fullPath,
-            onSelected: () {},
-          ),
-        ],
-      );
     }
   }
 
@@ -714,6 +681,8 @@ class _DBViewerPageState extends State<DBViewerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = MacosTheme.of(context);
+
     return PlatformMenuBar(
       menus: [
         PlatformMenu(
@@ -726,7 +695,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
                   onSelected: () {
                     showAboutDialog(
                       context: context,
-                      applicationName: '🫐',
+                      applicationName: '🍊 Sqliter',
                       applicationVersion: '1.0.0',
                     );
                   },
@@ -743,7 +712,7 @@ class _DBViewerPageState extends State<DBViewerPage> {
           label: '🍎',
           menus: [
             PlatformMenuItem(
-              label: 'Open...',
+              label: 'Open Database...',
               shortcut: const CharacterActivator('o', meta: true),
               onSelected: _pickAndOpenFile,
             ),
@@ -755,8 +724,13 @@ class _DBViewerPageState extends State<DBViewerPage> {
             PlatformMenuItem(
               label: 'Go Home',
               shortcut: const SingleActivator(LogicalKeyboardKey.keyH, meta: true, shift: true),
+              onSelected: _loadHome,
+            ),
+            PlatformMenuItem(
+              label: 'Toggle Sidebar',
+              shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true),
               onSelected: () {
-                _loadHome();
+                setState(() => _showSidebar = !_showSidebar);
               },
             ),
             PlatformMenuItem(
@@ -764,152 +738,327 @@ class _DBViewerPageState extends State<DBViewerPage> {
               shortcut: const CharacterActivator('f', meta: true, control: true),
               onSelected: () async {
                 bool isFullScreen = await windowManager.isFullScreen();
-                if (isFullScreen) {
-                  await windowManager.setFullScreen(false);
-                } else {
-                  await windowManager.setFullScreen(true);
-                }
+                await windowManager.setFullScreen(!isFullScreen);
               },
             ),
             PlatformMenuItem(
               label: 'Maximize Window',
               shortcut: const CharacterActivator('m', meta: true, control: true),
-              onSelected: () async {
-                  await windowManager.maximize();
+              onSelected: () async => await windowManager.maximize(),
+            ),
+          ],
+        ),
+      ],
+      child: MacosWindow(
+        child: MacosScaffold(
+          toolBar: buildBanquetBar(
+            context: context,
+            pathController: _pathController,
+            flightService: _flightService,
+            onHomeTap: _loadHome,
+            onNavigate: (path) {
+              _pathController.text = path;
+              _loadPath();
+            },
+            tileMode: _tileMode,
+            onToggleTile: (_gridColumns.isNotEmpty)
+                ? () {
+                    final cur = _pathController.text.replaceAll('#tile', '').trim();
+                    final next = _tileMode ? cur : '$cur#tile';
+                    _pathController.text = next;
+                    setState(() => _tileMode = !_tileMode);
+                  }
+                : null,
+          ),
+          children: [
+            ContentArea(
+              builder: (context, scrollController) {
+                if (_errorMessage != null) {
+                  return _buildErrorView();
+                }
+
+                return Row(
+                  children: [
+                    // Dataflare-style Schema Sidebar
+                    if (_showSidebar)
+                      SchemaSidebar(
+                        tables: _tables,
+                        selectedTable: _currentTableName,
+                        dbPath: _currentConnectedPath,
+                        isLoading: _isLoading,
+                        onSelectTable: (tableName) {
+                          setState(() {
+                            _selectedTab = AppTab.data;
+                            _activeFilterText = '';
+                            _activeFilterColumn = null;
+                          });
+                          _loadTableMetadata(tableName);
+                        },
+                        onRefresh: () async {
+                          if (_currentConnectedPath != null) {
+                            await _openDatabaseFile(_currentConnectedPath!, targetTable: _currentTableName);
+                          }
+                        },
+                        onOpenNewDb: _pickAndOpenFile,
+                      ),
+
+                    // Main Content Canvas
+                    Expanded(
+                      child: Column(
+                        children: [
+                          // Tab switcher & Quick Action Bar
+                          _buildTopTabBar(theme),
+
+                          // Active View
+                          Expanded(
+                            child: _buildActiveTabContent(theme),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
               },
             ),
           ],
         ),
-        if (_pathController.text.isNotEmpty)
-          _buildPathMenu(_pathController.text),
-      ],
-      child: MacosWindow(
-        child: MacosScaffold(
-        toolBar: buildBanquetBar(
-          context: context,
-          pathController: _pathController,
-          flightService: _flightService,
-          onHomeTap: () {
-            _loadHome();
-          },
-          onNavigate: (path) {
-            _pathController.text = path;
-            _loadPath();
-          },
-          tileMode: _tileMode,
-          onToggleTile: (_gridColumns.isNotEmpty)
-              ? () {
-                  // Toggle by appending/removing #tile from the current path
-                  final cur = _pathController.text.replaceAll('#tile', '').trim();
-                  final next = _tileMode ? cur : '$cur#tile';
-                  _pathController.text = next;
-                  setState(() => _tileMode = !_tileMode);
-                }
-              : null,
       ),
-      children: [
-        ContentArea(
-          builder: (context, scrollController) {
-             if (_errorMessage != null) {
-                return _buildErrorView();
-             }
-             
-             if (_isLoading) {
-               return const Center(child: ProgressCircle());
-             }
-             
-             // UNIFIED GRID VIEW
-             return Material(
-               color: Colors.transparent,
-               child: _tileMode
-                   ? TileView(
-                       key: ValueKey('tile_$_gridTitle'),
-                       columns: _gridColumns,
-                       onFetchRows: _fetchRows,
-                       totalRows: _totalRows,
-                       onNavigate: (path) => _loadPath(pathOverride: path),
-                     )
-                   : DatabaseGridView(
-                       key: _gridKey,
-                       columns: _gridColumns,
-                       tableName: _gridTitle,
-                       totalRows: _totalRows,
-                       onFetchRows: _fetchRows,
-                       onCellNavigate: (value) {
-                         _loadPath(pathOverride: value);
-                       },
-                       onRowDoubleTap: (row) {
-                    // Interaction Logic
-                    if (_viewType == 0) { // Home Mode
-                        if (_currentTableName == "2_banquet_links") {
-                            final path = row.cells['original_url']?.value?.toString();
-                            if (path != null) {
-                               _loadPath(pathOverride: path);
-                            }
-                        } else if (_currentTableName == "0_quick_links") {
-                            final action = row.cells['action']?.value?.toString();
-                            if (action == 'open_file') {
-                                _pickAndOpenFile();
-                            } else if (action == 'new_query') {
-                                setState(() {
-                                   _viewType = 2;
-                                   _gridTitle = "New Query";
-                                   _cachedBanquetRows = [];
-                                   _totalRows = 0;
-                                });
-                            }
-                        } else if (_currentTableName == "1_recent_files") {
-                            final path = row.cells['path']?.value?.toString();
-                            if (path != null) {
-                               _loadPath(pathOverride: path);
-                            }
-                        } else if (_currentTableName == "3_query_styles") {
-                            final sql = row.cells['sql']?.value?.toString();
-                            if (sql != null) {
-                               Clipboard.setData(ClipboardData(text: sql));
-                               // Optional: Show a toast/snackbar? 
-                               // For now, maybe just flash the title?
-                               final oldTitle = _gridTitle;
-                               setState(() => _gridTitle = "Copied to Clipboard!");
-                               Future.delayed(const Duration(seconds: 1), () {
-                                  if (mounted) setState(() => _gridTitle = oldTitle);
-                               });
-                            }
-                        }
-                    }
-                 },
-               ),
-             );
-          },
+    );
+  }
+
+  Widget _buildTopTabBar(MacosThemeData theme) {
+    return Container(
+      height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: theme.canvasColor,
+        border: Border(
+          bottom: BorderSide(color: theme.dividerColor, width: 0.5),
         ),
-      ],
-    ),
-   ),
-  );
- }
-  
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Sidebar Toggle Button
+            Tooltip(
+              message: _showSidebar ? 'Hide Sidebar' : 'Show Sidebar',
+              child: MacosIconButton(
+                padding: const EdgeInsets.all(4),
+                icon: Icon(
+                  CupertinoIcons.sidebar_left,
+                  size: 16,
+                  color: _showSidebar ? MacosColors.systemOrangeColor : null,
+                ),
+                onPressed: () {
+                  setState(() => _showSidebar = !_showSidebar);
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+
+            // Tabs: Data, Schema, SQL Editor
+            _buildTabButton(AppTab.data, 'Data Grid', CupertinoIcons.table, theme),
+            const SizedBox(width: 4),
+            _buildTabButton(AppTab.schema, 'Schema', CupertinoIcons.square_stack_3d_up, theme),
+            const SizedBox(width: 4),
+            _buildTabButton(AppTab.sqlEditor, 'SQL Editor', CupertinoIcons.chevron_left_slash_chevron_right, theme),
+
+            const SizedBox(width: 16),
+
+            // Active Table Badge
+            if (_currentTableName != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: theme.dividerColor.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(CupertinoIcons.table, size: 12, color: MacosColors.systemOrangeColor),
+                    const SizedBox(width: 6),
+                    Text(
+                      _currentTableName!,
+                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabButton(AppTab tab, String label, IconData icon, MacosThemeData theme) {
+    final isSelected = _selectedTab == tab;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedTab = tab),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isSelected ? theme.primaryColor.withValues(alpha: 0.15) : Colors.transparent,
+          borderRadius: BorderRadius.circular(5),
+          border: isSelected
+              ? Border.all(color: theme.primaryColor.withValues(alpha: 0.3), width: 1)
+              : Border.all(color: Colors.transparent, width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 13,
+              color: isSelected ? MacosColors.systemOrangeColor : theme.typography.body.color?.withValues(alpha: 0.7),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                color: isSelected ? theme.typography.headline.color : theme.typography.body.color?.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActiveTabContent(MacosThemeData theme) {
+    if (_isLoading) {
+      return const Center(child: ProgressCircle());
+    }
+
+    switch (_selectedTab) {
+      case AppTab.schema:
+        if (_currentTableName == null) {
+          return const Center(child: Text('Select a table to view schema.'));
+        }
+        return SchemaInspectorView(
+          dbService: _dbService,
+          tableName: _currentTableName!,
+        );
+
+      case AppTab.sqlEditor:
+        return SqlEditorView(
+          dbService: _dbService,
+          initialQuery: _currentTableName != null
+              ? 'SELECT * FROM "${_currentTableName!}" LIMIT 100;'
+              : 'SELECT * FROM sqlite_master LIMIT 50;',
+        );
+
+      case AppTab.data:
+        return Column(
+          children: [
+            // Filter Bar
+            if (_gridColumns.isNotEmpty)
+              TableFilterBar(
+                columns: _gridColumns.map((c) => c.title).toList(),
+                selectedColumn: _activeFilterColumn,
+                currentFilter: _activeFilterText,
+                totalRows: _totalRows ?? 0,
+                loadedRows: _gridColumns.length,
+                onFilterChanged: _onFilterChanged,
+                onRefresh: () {
+                  if (_currentTableName != null) {
+                    _loadTableMetadata(_currentTableName!);
+                  }
+                },
+                onAutoFit: _autoFitAllColumns,
+              ),
+
+            // Grid or Tile View
+            Expanded(
+              child: Material(
+                color: Colors.transparent,
+                child: _tileMode
+                    ? TileView(
+                        key: ValueKey('tile_$_gridTitle'),
+                        columns: _gridColumns,
+                        onFetchRows: _fetchRows,
+                        totalRows: _totalRows,
+                        onNavigate: (path) => _loadPath(pathOverride: path),
+                      )
+                    : DatabaseGridView(
+                        key: _gridKey,
+                        columns: _gridColumns,
+                        tableName: _gridTitle,
+                        totalRows: _totalRows,
+                        onFetchRows: _fetchRows,
+                        onStateManagerCreated: (sm) => _gridStateManager = sm,
+                        onCellNavigate: (value) {
+                          _loadPath(pathOverride: value);
+                        },
+                        onRowDoubleTap: (row) {
+                          if (_viewType == 0) {
+                            if (_currentTableName == "2_banquet_links") {
+                              final path = row.cells['original_url']?.value?.toString();
+                              if (path != null) _loadPath(pathOverride: path);
+                            } else if (_currentTableName == "0_quick_links") {
+                              final action = row.cells['action']?.value?.toString();
+                              if (action == 'open_file') {
+                                _pickAndOpenFile();
+                              } else if (action == 'new_query') {
+                                setState(() => _selectedTab = AppTab.sqlEditor);
+                              }
+                            } else if (_currentTableName == "1_recent_files") {
+                              final path = row.cells['path']?.value?.toString();
+                              if (path != null) _loadPath(pathOverride: path);
+                            }
+                          }
+                        },
+                      ),
+              ),
+            ),
+          ],
+        );
+    }
+  }
+
   Widget _buildErrorView() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(CupertinoIcons.exclamationmark_triangle, size: 64, color: MacosColors.systemRedColor),
-          const SizedBox(height: 0),
-          Text(
-            'Error',
-             style: MacosTheme.of(context).typography.title1.copyWith(color: MacosColors.systemRedColor),
-          ),
-          const SizedBox(height: 0),
-          Text(_errorMessage ?? 'Unknown error'),
-          const SizedBox(height: 0),
-          PushButton(
-             controlSize: ControlSize.large,
-             onPressed: () {
-               _loadHome();
-             }, 
-             child: const Text('Go Home')
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 48.0, vertical: 32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(CupertinoIcons.exclamationmark_triangle, size: 56, color: MacosColors.systemRedColor),
+            const SizedBox(height: 16),
+            Text(
+              'Unable to Load Database',
+              style: MacosTheme.of(context).typography.title1.copyWith(color: MacosColors.systemRedColor),
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              _errorMessage ?? 'Unknown error occurred.',
+              textAlign: TextAlign.center,
+              style: MacosTheme.of(context).typography.body,
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                PushButton(
+                  controlSize: ControlSize.large,
+                  secondary: true,
+                  onPressed: _loadHome,
+                  child: const Text('Go Home'),
+                ),
+                const SizedBox(width: 12),
+                PushButton(
+                  controlSize: ControlSize.large,
+                  onPressed: _pickAndOpenFile,
+                  child: const Text('Open with Finder (⌘O)'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
